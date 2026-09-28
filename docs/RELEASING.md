@@ -16,17 +16,17 @@ Each job builds independently (`fail-fast: false`, so one platform failing doesn
 
 **Builds are unsigned.** No code-signing certificates or secrets are required to get this working, but that means:
 - **Windows**: SmartScreen will show an "unrecognized app" warning on first run (users click "More info" → "Run anyway").
-- **macOS**: Gatekeeper will refuse to open it normally; users right-click the app → **Open** once to bypass it (or run `xattr -cr /Applications/OpenDesktopUI.app`).
+- **macOS**: Gatekeeper will refuse to open it normally; users right-click the app → **Open** once to bypass it (or run `xattr -cr /Applications/Open DesktopUI.app`).
 - **Linux**: no equivalent warning.
 
 Setting up real code signing later (a paid Windows/Apple Developer certificate) is a separate, optional step — see [Adding code signing later](#adding-code-signing-later).
 
 ## One-time setup
 
-1. **Create the GitHub repository** (if it doesn't exist yet) at `github.com/markusbegerow/opendesktopui`, via the GitHub website or `gh repo create markusbegerow/opendesktopui --public --source=. `.
+1. **Create the GitHub repository** (if it doesn't exist yet) at `github.com/markusbegerow/open-desktopui`, via the GitHub website or `gh repo create markusbegerow/open-desktopui --public --source=. `.
 2. **Connect this local repo to it** and push:
    ```bash
-   git remote add origin https://github.com/markusbegerow/opendesktopui.git
+   git remote add origin https://github.com/markusbegerow/open-desktopui.git
    git push -u origin master
    ```
 3. Nothing else to configure — the workflow uses the automatically-provided `GITHUB_TOKEN`, no secrets need to be added manually.
@@ -48,7 +48,7 @@ Setting up real code signing later (a paid Windows/Apple Developer certificate) 
    git tag vX.Y.Z
    git push --tags
    ```
-4. Watch it run under the repo's **Actions** tab. When all three platform jobs finish, a **draft** release named `OpenDesktopUI vX.Y.Z` appears under **Releases**, with all the installers attached.
+4. Watch it run under the repo's **Actions** tab. When all three platform jobs finish, a **draft** release named `Open DesktopUI vX.Y.Z` appears under **Releases**, with all the installers attached.
 5. Open the draft, add release notes if you want, and click **Publish release** when you're happy with it. Nothing is public until you publish — the workflow deliberately only ever creates a *draft*.
 
 ## Testing the pipeline without cutting a release
@@ -83,7 +83,7 @@ Honest, current-state list — update this as items get closed out, don't let it
 
 ## Auto-updates
 
-`tauri-plugin-updater` is wired in (`tauri.conf.json`'s `plugins.updater`, checked from Settings > About's "Check for updates" button). It checks `https://github.com/markusbegerow/opendesktopui/releases/latest/download/latest.json`, a manifest `tauri-action` generates automatically (`includeUpdaterJson: true` in `release.yml`) and signs with a keypair.
+`tauri-plugin-updater` is wired in (`tauri.conf.json`'s `plugins.updater`, checked from Settings > About's "Check for updates" button). It checks `https://github.com/markusbegerow/open-desktopui/releases/latest/download/latest.json`, a manifest `tauri-action` generates automatically (`includeUpdaterJson: true` in `release.yml`) and signs with a keypair.
 
 **The keypair was generated locally during this session** (`npx tauri signer generate`) and is **not committed** — `.tauri-updater-key.pem`/`.pub` are gitignored. The **public** half is already embedded in `tauri.conf.json`'s `plugins.updater.pubkey`. The **private** half needs two things from you before a release will actually produce signed, verifiable updates:
 
