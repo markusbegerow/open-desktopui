@@ -11,7 +11,7 @@
 
 **Claude Desktop, but for your own self-hosted Open WebUI server**
 
-[![Release](https://github.com/markusbegerow/opendesktopui/actions/workflows/release.yml/badge.svg)](https://github.com/markusbegerow/opendesktopui/actions/workflows/release.yml)
+[![Release](https://github.com/markusbegerow/open-desktopui/actions/workflows/release.yml/badge.svg)](https://github.com/markusbegerow/open-desktopui/actions/workflows/release.yml)
 
 [Screenshots](#screenshots) • [Features](#features) • [Installation](#installation) • [Getting Started](#getting-started) • [Development](#development) • [Known Limitations](#known-limitations)
 
@@ -59,12 +59,12 @@ A native, cross-platform desktop chat client that talks directly to your own **O
 
 ## Installation
 
-**Prebuilt installers**: grab the latest `.msi`/`.exe` (Windows), `.dmg` (macOS), or `.deb`/`.rpm`/`.AppImage` (Linux) from the [Releases page](https://github.com/markusbegerow/opendesktopui/releases).
+**Prebuilt installers**: grab the latest `.msi`/`.exe` (Windows), `.dmg` (macOS), or `.deb`/`.rpm`/`.AppImage` (Linux) from the [Releases page](https://github.com/markusbegerow/open-desktopui/releases).
 
 Installers aren't code-signed (see [Known Limitations](#known-limitations)), so your OS will warn you on first launch - that's expected, not a sign of a bad download. It's completely fine to run anyway:
 
 - **Windows**: SmartScreen will say "Windows protected your PC" - click **More info**, then **Run anyway**.
-- **macOS**: Gatekeeper will refuse to open it normally - right-click (or Control-click) the app and choose **Open**, then confirm in the dialog that appears. (Alternatively, run `xattr -cr /Applications/OpenDesktopUI.app` in Terminal.)
+- **macOS**: Gatekeeper will refuse to open it normally - right-click (or Control-click) the app and choose **Open**, then confirm in the dialog that appears. (Alternatively, run `xattr -cr /Applications/Open DesktopUI.app` in Terminal.)
 - **Linux**: no equivalent warning - nothing extra to do.
 
 You only need to do this once per install.
@@ -80,8 +80,8 @@ You only need to do this once per install.
 ## Development
 
 ```bash
-git clone https://github.com/markusbegerow/opendesktopui.git
-cd opendesktopui/apps/desktop
+git clone https://github.com/markusbegerow/open-desktopui.git
+cd open-desktopui/apps/desktop
 npm install
 ```
 
@@ -117,7 +117,7 @@ oikb-desktop/
 - **Installers aren't code-signed.** There's no plan to buy a Windows/Apple code-signing certificate right now - see [Installation](#installation) above for the (one-time, per-install) steps to run the app anyway.
 - **The oikb sidecar isn't bundled into the packaged app yet.** Knowledge Base Sync needs a separate `uv` install and an `oikb` checkout on your machine (pointed at from Settings → Knowledge) - it isn't a zero-setup feature out of the box today.
 - **Local data isn't encrypted at rest.** Chat history and settings are stored as a plain SQLite database and JSON file on disk (path shown in Settings → Account → Data).
-- **Two Open WebUI integrations are best-effort, not verified against every server**: pushing a conversation into your Open WebUI account ("Open in Open WebUI" / "Share Link") and message feedback (thumbs up/down) both call endpoints whose exact request/response shape was inferred from Open WebUI's general API conventions, not confirmed live against every version. If either doesn't work against your server, please [open an issue](https://github.com/markusbegerow/opendesktopui/issues) with what you see - everything else in the app (chat, models, knowledge bases, sign-in, file upload, transcription) has been verified against a live server.
+- **Two Open WebUI integrations are best-effort, not verified against every server**: pushing a conversation into your Open WebUI account ("Open in Open WebUI" / "Share Link") and message feedback (thumbs up/down) both call endpoints whose exact request/response shape was inferred from Open WebUI's general API conventions, not confirmed live against every version. If either doesn't work against your server, please [open an issue](https://github.com/markusbegerow/open-desktopui/issues) with what you see - everything else in the app (chat, models, knowledge bases, sign-in, file upload, transcription) has been verified against a live server.
 
 ## Contributing
 
@@ -143,15 +143,15 @@ This project is licensed under the **GPL-3.0** - see [`LICENSE`](LICENSE) for th
 ## 🙋‍♂️ Get Involved
 
 If you encounter any issues or have questions:
-- 🐛 [Report bugs](https://github.com/markusbegerow/opendesktopui/issues)
-- 💡 [Request features](https://github.com/markusbegerow/opendesktopui/issues)
+- 🐛 [Report bugs](https://github.com/markusbegerow/open-desktopui/issues)
+- 💡 [Request features](https://github.com/markusbegerow/open-desktopui/issues)
 - ⭐ Star the repo if you find it useful!
 
 ## ☕ Support the Project
 
 If you like this project, support further development with a repost or coffee:
 
-<a href="https://www.linkedin.com/sharing/share-offsite/?url=https://github.com/markusbegerow/opendesktopui" target="_blank"> <img src="https://img.shields.io/badge/💼-Share%20on%20LinkedIn-blue" /> </a>
+<a href="https://www.linkedin.com/sharing/share-offsite/?url=https://github.com/markusbegerow/open-desktopui" target="_blank"> <img src="https://img.shields.io/badge/💼-Share%20on%20LinkedIn-blue" /> </a>
 
 [![Buy Me a Coffee](https://img.shields.io/badge/☕-Buy%20me%20a%20coffee-yellow)](https://paypal.me/MarkusBegerow?country.x=DE&locale.x=de_DE)
 
