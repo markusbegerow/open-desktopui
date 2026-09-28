@@ -39,12 +39,12 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          workingDirectories: apps/desktop/src-tauri
+          workspaces: apps/desktop/src-tauri
 
       - name: Install Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
 
