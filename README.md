@@ -19,7 +19,7 @@
 
 ---
 
-A native, cross-platform desktop chat client that talks directly to your own **Open WebUI** server's REST API — not an embedded webview of Open WebUI's own frontend. It combines a fully custom React chat UI with **oikb**, Open WebUI's incremental Knowledge Base sync tool, so folders, GitHub repos, Confluence spaces, S3 buckets, Zotero libraries, and 40+ other source types can be kept in sync with your Knowledge Bases from right inside the app.
+A native, cross-platform desktop chat client that talks directly to your own **Open WebUI** server's REST API - not an embedded webview of Open WebUI's own frontend. It combines a fully custom React chat UI with **oikb**, Open WebUI's incremental Knowledge Base sync tool, so folders, GitHub repos, Confluence spaces, S3 buckets, Zotero libraries, and 40+ other source types can be kept in sync with your Knowledge Bases from right inside the app.
 
 ## Screenshots
 
@@ -39,7 +39,7 @@ A native, cross-platform desktop chat client that talks directly to your own **O
 ### 💬 Chat
 - Streaming responses straight from your Open WebUI server (no cloud middleman)
 - Drag-and-drop or picker-based **file attachments** (documents + images), uploaded and referenced in the conversation
-- **Voice input**: push-to-talk or click-to-toggle, transcribed via your own server — no third-party cloud speech service involved
+- **Voice input**: push-to-talk or click-to-toggle, transcribed via your own server - no third-party cloud speech service involved
 - Per-message actions: copy, edit-and-resend, regenerate, read-aloud, and thumbs up/down feedback
 - Pin, mark unread, archive, and group conversations; open any chat in its own window
 - Export a conversation as Markdown, or your whole local history as JSON
@@ -49,23 +49,23 @@ A native, cross-platform desktop chat client that talks directly to your own **O
 ### 📚 Knowledge Base Sync (powered by [oikb](https://github.com/open-webui/oikb))
 - Add local folders (and 40+ other source types oikb supports) as sync sources for your Open WebUI Knowledge Bases
 - Per-source sync interval, one-click manual sync, live status and history
-- The app manages the oikb daemon for you — no separate terminal window to keep open
+- The app manages the oikb daemon for you - no separate terminal window to keep open
 
 ## Requirements
 
 - Windows 10/11, macOS 11+, or a modern Linux desktop
 - A running [Open WebUI](https://github.com/open-webui/open-webui) server you have a URL and account for
-- For Knowledge Base Sync specifically: Python 3.11+, [uv](https://docs.astral.sh/uv/), and a local checkout of [`oikb`](https://github.com/open-webui/oikb) — see [Known Limitations](#known-limitations)
+- For Knowledge Base Sync specifically: Python 3.11+, [uv](https://docs.astral.sh/uv/), and a local checkout of [`oikb`](https://github.com/open-webui/oikb) - see [Known Limitations](#known-limitations)
 
 ## Installation
 
 **Prebuilt installers**: grab the latest `.msi`/`.exe` (Windows), `.dmg` (macOS), or `.deb`/`.rpm`/`.AppImage` (Linux) from the [Releases page](https://github.com/markusbegerow/opendesktopui/releases).
 
-Installers aren't code-signed (see [Known Limitations](#known-limitations)), so your OS will warn you on first launch — that's expected, not a sign of a bad download. It's completely fine to run anyway:
+Installers aren't code-signed (see [Known Limitations](#known-limitations)), so your OS will warn you on first launch - that's expected, not a sign of a bad download. It's completely fine to run anyway:
 
-- **Windows**: SmartScreen will say "Windows protected your PC" — click **More info**, then **Run anyway**.
-- **macOS**: Gatekeeper will refuse to open it normally — right-click (or Control-click) the app and choose **Open**, then confirm in the dialog that appears. (Alternatively, run `xattr -cr /Applications/OpenDesktopUI.app` in Terminal.)
-- **Linux**: no equivalent warning — nothing extra to do.
+- **Windows**: SmartScreen will say "Windows protected your PC" - click **More info**, then **Run anyway**.
+- **macOS**: Gatekeeper will refuse to open it normally - right-click (or Control-click) the app and choose **Open**, then confirm in the dialog that appears. (Alternatively, run `xattr -cr /Applications/OpenDesktopUI.app` in Terminal.)
+- **Linux**: no equivalent warning - nothing extra to do.
 
 You only need to do this once per install.
 
@@ -100,13 +100,13 @@ cargo check
 cargo build
 ```
 
-There's no configured lint or test runner yet — `tsc --noEmit` and `cargo check` are the correctness gates in practice. See [`docs/RELEASING.md`](docs/RELEASING.md) for how the cross-platform release pipeline works.
+There's no configured lint or test runner yet - `tsc --noEmit` and `cargo check` are the correctness gates in practice. See [`docs/RELEASING.md`](docs/RELEASING.md) for how the cross-platform release pipeline works.
 
 ### Project structure
 
 ```
 oikb-desktop/
-├── apps/desktop/       # the Tauri app — React/TS frontend (src/) + Rust backend (src-tauri/)
+├── apps/desktop/       # the Tauri app - React/TS frontend (src/) + Rust backend (src-tauri/)
 ├── oikb-main/          # oikb Python project, vendored unmodified as an external dependency
 ├── packaging/          # PyInstaller packaging for bundling oikb as a sidecar (not yet wired up)
 └── docs/               # additional docs (release pipeline, etc.)
@@ -114,10 +114,10 @@ oikb-desktop/
 
 ## Known Limitations
 
-- **Installers aren't code-signed.** There's no plan to buy a Windows/Apple code-signing certificate right now — see [Installation](#installation) above for the (one-time, per-install) steps to run the app anyway.
-- **The oikb sidecar isn't bundled into the packaged app yet.** Knowledge Base Sync needs a separate `uv` install and an `oikb` checkout on your machine (pointed at from Settings → Knowledge) — it isn't a zero-setup feature out of the box today.
+- **Installers aren't code-signed.** There's no plan to buy a Windows/Apple code-signing certificate right now - see [Installation](#installation) above for the (one-time, per-install) steps to run the app anyway.
+- **The oikb sidecar isn't bundled into the packaged app yet.** Knowledge Base Sync needs a separate `uv` install and an `oikb` checkout on your machine (pointed at from Settings → Knowledge) - it isn't a zero-setup feature out of the box today.
 - **Local data isn't encrypted at rest.** Chat history and settings are stored as a plain SQLite database and JSON file on disk (path shown in Settings → Account → Data).
-- **Two Open WebUI integrations are best-effort, not verified against every server**: pushing a conversation into your Open WebUI account ("Open in Open WebUI" / "Share Link") and message feedback (thumbs up/down) both call endpoints whose exact request/response shape was inferred from Open WebUI's general API conventions, not confirmed live against every version. If either doesn't work against your server, please [open an issue](https://github.com/markusbegerow/opendesktopui/issues) with what you see — everything else in the app (chat, models, knowledge bases, sign-in, file upload, transcription) has been verified against a live server.
+- **Two Open WebUI integrations are best-effort, not verified against every server**: pushing a conversation into your Open WebUI account ("Open in Open WebUI" / "Share Link") and message feedback (thumbs up/down) both call endpoints whose exact request/response shape was inferred from Open WebUI's general API conventions, not confirmed live against every version. If either doesn't work against your server, please [open an issue](https://github.com/markusbegerow/opendesktopui/issues) with what you see - everything else in the app (chat, models, knowledge bases, sign-in, file upload, transcription) has been verified against a live server.
 
 ## Contributing
 
@@ -129,11 +129,11 @@ Contributions are welcome!
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-`oikb-main/` is vendored unmodified — please don't send PRs that edit its Python source directly; changes there belong upstream at [open-webui/oikb](https://github.com/open-webui/oikb).
+`oikb-main/` is vendored unmodified - please don't send PRs that edit its Python source directly; changes there belong upstream at [open-webui/oikb](https://github.com/open-webui/oikb).
 
 ## License
 
-This project is licensed under the **GPL-3.0** — see [`LICENSE`](LICENSE) for the full text. The vendored `oikb-main/` subtree keeps its own **MIT** license (see [`oikb-main/LICENSE`](oikb-main/LICENSE)) — it's an unmodified external dependency, not covered by this project's license.
+This project is licensed under the **GPL-3.0** - see [`LICENSE`](LICENSE) for the full text. The vendored `oikb-main/` subtree keeps its own **MIT** license (see [`oikb-main/LICENSE`](oikb-main/LICENSE)) - it's an unmodified external dependency, not covered by this project's license.
 
 ## Acknowledgments
 
