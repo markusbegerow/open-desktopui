@@ -1,0 +1,19 @@
+[advisories]
+ignore = [
+    # rsa: "Marvin Attack" timing side-channel, no fixed upgrade exists
+    # upstream. Pulled in transitively (only for non-Windows target builds —
+    # confirmed absent from `cargo tree` on this Windows host) via sqlx's
+    # MySQL auth plugin; this app only ever enables sqlx's `sqlite` feature
+    # and never performs a MySQL handshake, so the vulnerable code path is
+    # never exercised. Re-check when a fixed `rsa` release exists.
+    "RUSTSEC-2023-0071",
+    # sqlx 0.8.0: binary-protocol cast issue, fixed in >=0.8.1. Version is
+    # hard-pinned by `tauri-plugin-sql` 2.4.1 (the latest stable release as
+    # of this writing — only a 3.0.0-alpha exists beyond it, not suitable
+    # for a production dependency). The advisory concerns misinterpreting
+    # attacker-controlled wire-protocol bytes from a remote MySQL/Postgres
+    # server; this app only uses sqlx against a local SQLite file it created
+    # itself, so the vulnerable path isn't reachable. Re-check whenever
+    # `tauri-plugin-sql` cuts a new stable release.
+    "RUSTSEC-2024-0363",
+]

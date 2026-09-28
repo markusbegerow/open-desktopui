@@ -1,0 +1,38 @@
+# Node
+node_modules/
+dist/
+dist-ssr/
+
+# Rust / Tauri
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/binaries/
+
+# PyInstaller build output
+packaging/oikb-sidecar/build/
+packaging/oikb-sidecar/dist/
+packaging/oikb-sidecar/__pycache__/
+*.spec.bak
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.stackdump
+.vscode/
+.idea/
+
+# Env / secrets
+.env
+.env.local
+.tauri-updater-key.pem
+.tauri-updater-key.pem.pub
+
+# Local dev/test scratch
+/test-kb-source/
+oikb-main/.oikb.yaml
+oikb-main/.venv/

@@ -1,0 +1,128 @@
+name: Release
+
+# Builds the Tauri desktop app for Windows, macOS, and Linux and attaches the
+# installers to a draft GitHub Release. Triggered by pushing a version tag
+# (v*.*.*), or manually (workflow_dispatch) to test the build without cutting
+# a real release — see docs/RELEASING.md.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "windows-latest"
+          - platform: "macos-latest"
+          - platform: "ubuntu-latest"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri v2's documented Ubuntu build dependencies — Windows/macOS
+      # runners already have everything they need preinstalled.
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workingDirectories: apps/desktop/src-tauri
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      # Real release: only when triggered by pushing a version tag.
+      #
+      # Code-signing secrets (see docs/RELEASING.md's "Adding code signing
+      # later"): left as plain GitHub secrets references. tauri-action treats
+      # an unset/empty signing var the same as "not configured" and produces
+      # an unsigned build exactly as it does today — so these are safe to
+      # leave wired in permanently; the day real certificates are added, the
+      # only remaining step is populating these secrets in the repo, no
+      # workflow change needed.
+      - name: Build and publish draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Signs the updater manifest (latest.json) so already-installed
+          # copies can verify a downloaded update before applying it — see
+          # docs/RELEASING.md's "Auto-updates" section for how this keypair
+          # was generated and where the private half lives.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "Open DesktopUI ${{ github.ref_name }}"
+          releaseBody: |
+            ## Installers aren't code-signed
+
+            Your OS will warn you on first launch — that's expected, not a sign of a bad download. It's fine to run anyway:
+
+            - **Windows**: click "More info", then "Run anyway" on the SmartScreen prompt.
+            - **macOS**: right-click the app → **Open** (or run `xattr -cr /Applications/Open DesktopUI.app` in Terminal).
+            - **Linux**: no equivalent warning — nothing extra to do.
+
+            You only need to do this once per install.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+
+      # Manual test run (workflow_dispatch, no tag): build only, no release
+      # created — the installers are uploaded as a workflow artifact instead
+      # so you can download and sanity-check them without touching Releases.
+      - name: Build only (manual test run)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: apps/desktop
+
+      - name: Upload build artifacts (manual test run)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: opendesktopui-${{ matrix.platform }}
+          path: apps/desktop/src-tauri/target/release/bundle/**
+          if-no-files-found: warn

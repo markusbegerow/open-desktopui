@@ -1,0 +1,1436 @@
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --menu-z: 50;
+  --chat-font-size: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app-shell {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+}
+
+.sidebar {
+  width: 180px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 8px;
+  background: color-mix(in srgb, canvas 92%, canvastext 8%);
+  border-right: 1px solid color-mix(in srgb, canvas 80%, canvastext 20%);
+}
+
+.sidebar-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+.sidebar-toggle {
+  align-self: flex-end;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  flex-shrink: 0;
+}
+
+.sidebar.collapsed {
+  width: 56px;
+  padding: 12px 6px;
+}
+
+.sidebar.collapsed .sidebar-toggle {
+  align-self: center;
+}
+
+.sidebar-new-chat-collapsed {
+  align-self: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  margin-bottom: 8px;
+  border: 1px solid color-mix(in srgb, canvas 60%, canvastext 40%);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.sidebar-new-chat-collapsed:hover {
+  background: color-mix(in srgb, canvas 80%, canvastext 20%);
+}
+
+.sidebar.collapsed .sidebar-scroll,
+.sidebar.collapsed .sidebar-account-name {
+  display: none;
+}
+
+.sidebar-search {
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  border-radius: 6px;
+  background: color-mix(in srgb, canvas 95%, canvastext 5%);
+  color: inherit;
+  font-size: 13px;
+}
+
+.sidebar-search-empty {
+  padding: 4px 10px;
+}
+
+.sidebar button {
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: inherit;
+  font-size: 14px;
+}
+
+.sidebar button:hover {
+  background: color-mix(in srgb, canvas 80%, canvastext 20%);
+}
+
+.sidebar button.active {
+  background: color-mix(in srgb, canvas 70%, canvastext 30%);
+  font-weight: 600;
+}
+
+.new-chat-button {
+  border: 1px solid color-mix(in srgb, canvas 60%, canvastext 40%) !important;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.sidebar-section-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+  padding: 12px 10px 4px;
+}
+
+.sidebar-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, canvas 80%, canvastext 20%);
+  border-radius: 0;
+  flex-shrink: 0;
+}
+
+.sidebar-account-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #1d4ed8;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.sidebar-account-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.conversation-item {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+
+.conversation-item.active {
+  background: color-mix(in srgb, canvas 70%, canvastext 30%);
+}
+
+.conversation-item.unread {
+  font-weight: 700;
+}
+
+.conversation-unread-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #1d4ed8;
+  margin-right: 6px;
+}
+
+.conversation-item-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.conversation-rename-input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #1d4ed8;
+  border-radius: 6px;
+  background: color-mix(in srgb, canvas 95%, canvastext 5%);
+  color: inherit;
+  font-size: 13px;
+}
+
+.conversation-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.conversation-menu-trigger {
+  opacity: 0;
+  padding: 4px 6px !important;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.conversation-item-row:hover .conversation-menu-trigger {
+  opacity: 0.8;
+}
+
+.conversation-menu-trigger:hover {
+  opacity: 1 !important;
+}
+
+.conversation-menu-list,
+.conversation-menu-submenu {
+  z-index: var(--menu-z);
+}
+
+/* Compound selectors (not just .conversation-menu-list/-submenu alone) so
+   this beats .picker-menu's own max-height/overflow-y (App.css ~1040) —
+   equal specificity otherwise, and .picker-menu is declared later in this
+   file, so it would win the cascade and reintroduce the scrollbar. This
+   menu's item count is small and fixed, unlike KnowledgePicker's dropdown
+   (which keeps .picker-menu's shared cap for potentially long lists) — it
+   should always render fully, no scrollbar. */
+.picker-menu.conversation-menu-list,
+.picker-menu.conversation-menu-submenu {
+  max-height: none;
+  overflow-y: visible;
+}
+
+/* Compound class selector (not just .conversation-menu-delete) so this beats
+   .sidebar button's `color: inherit` (App.css:80) — the floating menu is
+   still a DOM descendant of .sidebar even though it's positioned fixed
+   elsewhere, and `.sidebar button` has higher specificity (class+element)
+   than a single class alone. */
+.picker-option.conversation-menu-delete {
+  color: #dc2626;
+}
+
+.picker-option.conversation-menu-delete:hover {
+  background: color-mix(in srgb, #dc2626 15%, canvas 85%);
+}
+
+.picker-divider {
+  border: none;
+  height: 1px;
+  margin: 4px 2px;
+  background: color-mix(in srgb, canvas 70%, canvastext 30%);
+}
+
+.conversation-menu-new-group {
+  padding: 4px;
+}
+
+.conversation-menu-new-group input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+}
+
+.sidebar-archived-toggle {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 10px !important;
+  font-size: 12px;
+  opacity: 0.7;
+  text-align: left;
+}
+
+.home-view {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.home-greeting {
+  font-size: 28px;
+  font-weight: 600;
+  margin-bottom: 24px;
+}
+
+.dashboard {
+  border: 1px solid color-mix(in srgb, canvas 80%, canvastext 20%);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.stat-tile {
+  padding: 8px 0;
+}
+
+.stat-label {
+  font-size: 12px;
+  opacity: 0.6;
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.activity-grid {
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+}
+
+.activity-week {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.activity-cell {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: color-mix(in srgb, canvas 85%, canvastext 15%);
+}
+
+.activity-level-1 {
+  background: #9ec5fe;
+}
+.activity-level-2 {
+  background: #6ea8fe;
+}
+.activity-level-3 {
+  background: #3d7cf4;
+}
+.activity-level-4 {
+  background: #1d4ed8;
+}
+
+.usage-card {
+  border: 1px solid color-mix(in srgb, canvas 80%, canvastext 20%);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.usage-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.usage-tabs,
+.usage-range {
+  display: flex;
+  gap: 4px;
+}
+
+.usage-tabs button,
+.usage-range button {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.usage-tabs button.active,
+.usage-range button.active {
+  background: color-mix(in srgb, canvas 70%, canvastext 30%);
+  font-weight: 600;
+}
+
+.usage-chart-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.usage-chart-row {
+  display: flex;
+  gap: 8px;
+}
+
+.usage-chart-yaxis,
+.usage-chart-yaxis-spacer {
+  flex-shrink: 0;
+  width: 40px;
+}
+
+.usage-chart-yaxis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 160px;
+  font-size: 10px;
+  opacity: 0.6;
+  text-align: right;
+}
+
+.usage-chart {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 160px;
+}
+
+.usage-bar {
+  flex: 1;
+  min-width: 2px;
+  min-height: 1px;
+  background: #3d7cf4;
+  border-radius: 2px 2px 0 0;
+}
+
+.usage-chart-labels {
+  flex: 1;
+  display: flex;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.usage-chart-label {
+  flex: 1;
+  font-size: 10px;
+  opacity: 0.6;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.usage-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.usage-model-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.usage-model-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.usage-model-name {
+  font-weight: 600;
+  min-width: 120px;
+}
+
+.usage-model-detail {
+  flex: 1;
+  opacity: 0.7;
+  text-align: right;
+}
+
+.usage-model-pct {
+  min-width: 50px;
+  text-align: right;
+  font-weight: 600;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 24px 32px;
+}
+
+.view h2 {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.hint {
+  opacity: 0.7;
+  font-size: 13px;
+}
+
+.status-ok {
+  color: #2e7d32;
+}
+
+.status-error {
+  color: #c62828;
+}
+
+.settings-view {
+  max-width: 720px;
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+}
+
+.settings-tabs button {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  font-size: 14px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.settings-tabs button:hover {
+  background: color-mix(in srgb, canvas 88%, canvastext 12%);
+}
+
+.settings-tabs button.active {
+  border-bottom-color: #1d4ed8;
+  background: color-mix(in srgb, #1d4ed8 10%, canvas 90%);
+  font-weight: 600;
+}
+
+.about-app-name {
+  margin: 4px 0 8px;
+  font-size: 18px;
+}
+
+.advanced-toggle {
+  display: block;
+  margin: 6px 0 10px;
+  padding: 6px 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.75;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.advanced-toggle:hover {
+  opacity: 1;
+}
+
+/* Fieldsets only ever appear in Settings/KB Sync/About — one consistent
+   "card" treatment for all of them, not just ones inside .settings-form
+   (which used to be the only ones styled, leaving every other fieldset with
+   the browser's raw default groove border). */
+fieldset {
+  border: 1px solid color-mix(in srgb, canvas 80%, canvastext 20%);
+  border-radius: 8px;
+  margin: 0 0 12px;
+  padding: 10px 14px 12px;
+  /* Fieldsets have a long-standing browser quirk: they refuse to shrink
+     below their content's intrinsic min-content width (the same class of
+     bug as the flexbox min-width:auto gotcha noted elsewhere in this file,
+     just triggered by <fieldset> itself rather than a flex item). Without
+     this, a wide descendant (e.g. .table-scroll around .sources-table)
+     never actually gets constrained, so its overflow-x:auto never kicks in
+     and the scroll escapes all the way up to .content instead of staying
+     contained under just the table. */
+  min-width: 0;
+}
+
+fieldset legend {
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+/* Pairs a label with its (short) control on one line — label text on the
+   left, control on the right — rather than stacking them. Text inputs
+   override back to block below since a wide field doesn't work squeezed
+   into a right-aligned row. */
+fieldset label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 6px 0;
+  font-size: 13px;
+}
+
+fieldset label:has(> input[type="text"]),
+fieldset label:has(> input[type="password"]) {
+  display: block;
+}
+
+fieldset label.row {
+  justify-content: flex-start;
+}
+
+.connection-display {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin: 10px 0;
+  font-size: 14px;
+}
+
+fieldset input[type="text"],
+fieldset input[type="password"] {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  margin-top: 4px;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  border-radius: 6px;
+  background: color-mix(in srgb, canvas 95%, canvastext 5%);
+  color: inherit;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+fieldset select {
+  display: inline-block;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  border-radius: 6px;
+  background: color-mix(in srgb, canvas 95%, canvastext 5%);
+  color: inherit;
+  font-size: 13px;
+  min-width: 140px;
+  flex-shrink: 0;
+}
+
+fieldset input[type="text"]:focus,
+fieldset input[type="password"]:focus,
+fieldset select:focus {
+  outline: 2px solid color-mix(in srgb, #1d4ed8 60%, canvas 40%);
+  outline-offset: 1px;
+}
+
+fieldset input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: #1d4ed8;
+  margin: 0;
+}
+
+fieldset button:not(.link-button),
+.row button:not(.link-button) {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, canvas 60%, canvastext 40%);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+fieldset button:not(.link-button):hover,
+.row button:not(.link-button):hover {
+  background: color-mix(in srgb, canvas 80%, canvastext 20%);
+}
+
+fieldset button:not(.link-button):disabled,
+.row button:not(.link-button):disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+fieldset button[type="submit"] {
+  border-color: #1d4ed8;
+  background: color-mix(in srgb, #1d4ed8 15%, canvas 85%);
+  font-weight: 600;
+}
+
+fieldset button[type="submit"]:hover {
+  background: color-mix(in srgb, #1d4ed8 25%, canvas 75%);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  row-gap: 8px;
+  margin-top: 8px;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  margin-bottom: 14px;
+}
+
+.sources-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.sources-table th,
+.sources-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid color-mix(in srgb, canvas 80%, canvastext 20%);
+}
+
+.row h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.source-folder-path {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Sources list: a wrapping card per source instead of a fixed-column table
+   — every row's content (checkbox/name/actions/fields) can drop to its own
+   line at any window width, so there is structurally nothing to scroll
+   horizontally, unlike a table with fixed columns. */
+.source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.source-card {
+  border: 1px solid color-mix(in srgb, canvas 75%, canvastext 25%);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, canvas 96%, canvastext 4%);
+}
+
+.source-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.source-card-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.source-card-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.source-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.source-card-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.source-card-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.source-card-label {
+  opacity: 0.6;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.chat-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.chat-thread {
+  flex: 1;
+  overflow-y: auto;
+  margin: 16px 0;
+  /* Cancel .content's right padding and re-add it as inner padding, so this
+     element's box (and its scrollbar) extends flush to .content's true
+     outer edge — the app's actual right edge — while the centered inner
+     content still keeps a comfortable margin from it. */
+  margin-right: -32px;
+  padding-right: 32px;
+}
+
+.chat-thread-inner {
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.chat-view-footer {
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.chat-message {
+  max-width: 80%;
+}
+
+.chat-message-user {
+  align-self: flex-end;
+  text-align: right;
+}
+
+.chat-message-assistant {
+  align-self: flex-start;
+}
+
+.chat-message-role {
+  font-size: 11px;
+  opacity: 0.6;
+  margin-bottom: 2px;
+}
+
+.chat-message-content {
+  background: color-mix(in srgb, canvas 92%, canvastext 8%);
+  border-radius: 10px;
+  padding: 8px 12px;
+  display: inline-block;
+  text-align: left;
+  font-size: var(--chat-font-size);
+}
+
+.chat-message-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.chat-message-user .chat-message-actions {
+  justify-content: flex-end;
+}
+
+.chat-message:hover .chat-message-actions {
+  opacity: 1;
+}
+
+.chat-message-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.chat-message-actions button:hover {
+  opacity: 1;
+  background: color-mix(in srgb, canvas 80%, canvastext 20%);
+}
+
+.chat-message-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+
+.chat-message-edit textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  border-radius: 10px;
+  background: color-mix(in srgb, canvas 95%, canvastext 5%);
+  color: inherit;
+}
+
+.chat-message-edit-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.chat-message-content pre {
+  overflow-x: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, canvas 80%, canvastext 20%);
+}
+
+.chat-message-content p:first-child {
+  margin-top: 0;
+}
+
+.chat-message-content p:last-child {
+  margin-bottom: 0;
+}
+
+.thinking-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.thinking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, canvas 25%, canvastext 75%);
+  animation: thinking-pulse 1.2s ease-in-out infinite;
+}
+
+.thinking-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.thinking-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes thinking-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.composer {
+  display: flex;
+}
+
+.composer-input-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+}
+
+.composer textarea {
+  flex: 1;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  padding: 12px 52px 12px 14px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  border-radius: 14px;
+  background: color-mix(in srgb, canvas 95%, canvastext 5%);
+  color: inherit;
+}
+
+.composer textarea:focus {
+  outline: none;
+  border-color: #1d4ed8;
+}
+
+.composer-send {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  background: #1d4ed8;
+  color: white;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.composer-send:hover:not(:disabled) {
+  background: color-mix(in srgb, #1d4ed8 85%, canvastext 15%);
+}
+
+.composer-send:active:not(:disabled) {
+  transform: translateY(-50%) scale(0.92);
+}
+
+.composer-send:disabled {
+  background: color-mix(in srgb, canvas 60%, canvastext 40%);
+  cursor: default;
+}
+
+.composer-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.composer-toolbar-left,
+.composer-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.mic-button {
+  font-size: 14px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  background: transparent;
+  cursor: pointer;
+}
+
+.mic-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mic-button.active {
+  background: color-mix(in srgb, #dc2626 20%, canvas 80%);
+  border-color: #dc2626;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--menu-z) + 10);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.modal-box {
+  background: canvas;
+  color: canvastext;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  border-radius: 12px;
+  padding: 20px;
+  width: 100%;
+  max-width: 360px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.modal-box h3 {
+  margin: 0 0 8px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.modal-actions button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, canvas 60%, canvastext 40%);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.modal-actions button:hover {
+  background: color-mix(in srgb, canvas 80%, canvastext 20%);
+}
+
+.modal-button-danger {
+  background: #dc2626 !important;
+  border-color: #dc2626 !important;
+  color: white !important;
+}
+
+.modal-button-danger:hover {
+  background: #b91c1c !important;
+}
+
+.signing-in-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--menu-z) + 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  cursor: wait;
+  background: color-mix(in srgb, canvas 80%, transparent 20%);
+}
+
+.signing-in-message {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 14px 22px;
+  border-radius: 8px;
+  background: color-mix(in srgb, canvas 92%, canvastext 8%);
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+}
+
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+}
+
+.splash-logo {
+  width: 320px;
+  max-width: 70vw;
+  animation: splash-fade-in 0.6s ease-out;
+}
+
+.splash-credit {
+  position: fixed;
+  bottom: 16px;
+  right: 20px;
+  font-size: 12px;
+  color: #6b7280;
+  animation: splash-fade-in 0.6s ease-out 0.2s both;
+}
+
+@keyframes splash-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--menu-z) + 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: color-mix(in srgb, canvas 80%, transparent 20%);
+  border: 3px dashed color-mix(in srgb, canvas 40%, canvastext 60%);
+  margin: 12px;
+  border-radius: 12px;
+}
+
+.drop-overlay-message {
+  font-size: 18px;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 8px;
+  background: color-mix(in srgb, canvas 92%, canvastext 8%);
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+}
+
+.attach-button {
+  font-size: 14px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  background: transparent;
+  cursor: pointer;
+}
+
+.attachment-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.context-row .attachment-chip-row {
+  margin-bottom: 0;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  background: color-mix(in srgb, canvas 92%, canvastext 8%);
+  font-size: 12px;
+  max-width: 220px;
+}
+
+.attachment-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-chip-remove {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  opacity: 0.7;
+}
+
+.attachment-chip-remove:hover {
+  opacity: 1;
+}
+
+.attachment-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dismiss-error {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.picker-dropdown {
+  position: relative;
+  display: inline-block;
+  margin-bottom: 8px;
+}
+
+.composer-toolbar .picker-dropdown {
+  margin-bottom: 0;
+}
+
+.picker-toggle {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  background: transparent;
+  cursor: pointer;
+}
+
+.picker-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.picker-menu {
+  z-index: var(--menu-z);
+  min-width: 200px;
+  max-height: 270px;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  background: canvas;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.picker-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+
+.picker-option:hover {
+  background: color-mix(in srgb, canvas 85%, canvastext 15%);
+}
+
+.picker-option.active {
+  background: color-mix(in srgb, #1d4ed8 20%, canvas 80%);
+}
+
+.login-view {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-card {
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.login-logo {
+  width: 160px;
+  max-width: 100%;
+  align-self: center;
+  margin-bottom: 12px;
+}
+
+.login-credit {
+  position: fixed;
+  bottom: 16px;
+  right: 20px;
+  font-size: 12px;
+  color: color-mix(in srgb, canvas 25%, canvastext 75%);
+}
+
+.login-card h1 {
+  font-size: 22px;
+  margin-bottom: 4px;
+}
+
+.login-card label {
+  display: block;
+  margin: 10px 0;
+  font-size: 13px;
+}
+
+.login-card input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px;
+}
+
+.login-card button[type="submit"] {
+  margin-top: 12px;
+  padding: 8px;
+  font-weight: 600;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  text-decoration: none;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.7;
+  font-size: 13px;
+  align-self: flex-start;
+}
+
+.link-button.inline {
+  display: inline;
+  font-size: inherit;
+}
+
+.server-line {
+  margin-bottom: 12px;
+}

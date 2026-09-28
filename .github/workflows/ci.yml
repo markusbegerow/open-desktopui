@@ -1,0 +1,87 @@
+name: CI
+
+# Fast feedback loop on every push/PR: typecheck, unit tests, and dependency
+# audits. Deliberately a separate, single-OS workflow from release.yml (which
+# builds real multi-platform installers only on a version tag or manual
+# dispatch) — this one is meant to run on every commit, so it stays cheap.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same Tauri v2 Ubuntu build dependencies as release.yml — needed even
+      # just to `cargo check`/`cargo test` the app, since it links against
+      # webkit2gtk.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workingDirectories: apps/desktop/src-tauri
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Typecheck frontend
+        working-directory: apps/desktop
+        run: npx tsc --noEmit
+
+      - name: Run frontend tests
+        working-directory: apps/desktop
+        run: npm run test
+
+      # Non-blocking for now (see docs/RELEASING.md's "Dependency audits"
+      # section) — tighten to a hard failure once any future findings are
+      # triaged the same way the current ones were.
+      - name: npm audit
+        working-directory: apps/desktop
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: cargo check
+        working-directory: apps/desktop/src-tauri
+        run: cargo check
+
+      - name: cargo test
+        working-directory: apps/desktop/src-tauri
+        run: cargo test
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+        continue-on-error: true
+
+      - name: cargo audit
+        working-directory: apps/desktop/src-tauri
+        run: cargo audit
+        continue-on-error: true
