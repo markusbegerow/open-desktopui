@@ -1,4 +1,4 @@
-# OpenDesktopUI
+# Open DesktopUI
 
 <div align="center">
 
