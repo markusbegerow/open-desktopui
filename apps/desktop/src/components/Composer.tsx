@@ -8,13 +8,16 @@ export interface ComposerHandle {
 }
 
 export interface ComposerProps {
-  onSend: (text: string, attachments: PendingAttachment[]) => void;
+  onSend: (text: string, attachments: PendingAttachment[]) => void | boolean | Promise<boolean | void>;
   disabled: boolean;
   attachments: PendingAttachment[];
+  /** A reply is streaming: the send button turns into a Stop button. */
+  streaming?: boolean;
+  onStop?: () => void;
 }
 
 const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { onSend, disabled, attachments },
+  { onSend, disabled, attachments, streaming, onStop },
   ref,
 ) {
   const { t } = useTranslation();
@@ -34,8 +37,13 @@ const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
   function submit() {
     const text = value.trim();
     if ((!text && attachments.length === 0) || disabled) return;
-    onSend(text, attachments);
+    const result = onSend(text, attachments);
     setValue("");
+    // The handler reports `false` when the message was not sent (upload or
+    // storage failed) — put the text back so it isn't lost.
+    void Promise.resolve(result).then((ok) => {
+      if (ok === false) setValue((current) => current || text);
+    });
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -67,6 +75,19 @@ const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
           rows={3}
           disabled={disabled}
         />
+        {streaming && onStop ? (
+          <button
+            className="composer-send"
+            onClick={onStop}
+            type="button"
+            aria-label="Stop"
+            title="Stop generating"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+          </button>
+        ) : (
         <button
           className="composer-send"
           onClick={submit}
@@ -79,6 +100,7 @@ const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
             <path d="M22 2 15 22l-4-9-9-4Z" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
+        )}
       </div>
     </div>
   );

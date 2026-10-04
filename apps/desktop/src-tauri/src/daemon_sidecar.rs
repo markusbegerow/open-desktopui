@@ -40,27 +40,57 @@ impl DaemonState {
     }
 }
 
-/// Kills whatever is currently listening on port 8080 — our own previously
-/// spawned child, a stale one from a prior session, or a manually-started
-/// daemon the user left running. Same proven pattern as
-/// `apps/desktop/rebuild-and-run.bat`'s port-1420 cleanup.
-fn kill_port_8080() {
-    let _ = StdCommand::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }",
-        ])
-        .output();
+/// Kills our own leftover daemon (a stale child from a prior session, or one
+/// started by hand) that is *listening* on port 8080, including its process
+/// tree. Port 8080 is a very common port (Open WebUI, dev servers, ...), so a
+/// listener whose image isn't `oikb`/`python`/`uv` is left alone and its name
+/// is returned so the caller can report the conflict instead of killing it.
+fn free_port_8080() -> Option<String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const SCRIPT: &str = "Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue |             ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue;               if ($p) { if ($p.ProcessName -match '^(oikb|python|pythonw|uv)') { taskkill /T /F /PID $p.Id | Out-Null }                         else { Write-Output $p.ProcessName } } }";
+        let output = StdCommand::new("powershell")
+            .args(["-NoProfile", "-Command", SCRIPT])
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .output()
+            .ok()?;
+        let foreign = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if foreign.is_empty() {
+            None
+        } else {
+            Some(foreign.lines().next().unwrap_or_default().to_string())
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
 }
 
-/// Stops and forgets our own tracked child, if any (separate from
-/// `kill_port_8080`, which handles processes we didn't spawn ourselves).
+/// Stops and forgets our own tracked child, if any, together with its
+/// process tree (`uv run oikb` leaves a python grandchild that would
+/// otherwise survive and keep holding port 8080).
 pub fn kill_daemon(app: &AppHandle) {
     let state = app.state::<DaemonState>();
-    state.mark_expected_exit();
-    let mut guard = state.child.lock().unwrap();
-    if let Some(child) = guard.take() {
+    let child = state
+        .child
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+    // Only flag an expected exit when there is a child whose `Terminated`
+    // event will consume the flag — otherwise it would stay set and hide a
+    // later genuine crash.
+    if let Some(child) = child {
+        state.mark_expected_exit();
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let _ = StdCommand::new("taskkill")
+                .args(["/T", "/F", "/PID", &child.pid().to_string()])
+                .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+                .output();
+        }
         let _ = child.kill();
     }
 }
@@ -100,7 +130,14 @@ pub async fn spawn_daemon(
     api_key: Option<String>,
 ) -> Result<(), String> {
     kill_daemon(&app);
-    kill_port_8080();
+    let foreign = tokio::task::spawn_blocking(free_port_8080)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(name) = foreign {
+        return Err(format!(
+            "port 8080 is already in use by another program ({name}); stop it or free the port and try again"
+        ));
+    }
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let mut used_sidecar = true;

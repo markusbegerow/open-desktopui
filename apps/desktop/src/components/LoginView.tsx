@@ -6,7 +6,13 @@ import { isInsecureRemoteUrl } from "../lib/network";
 
 type Step = "loading" | "server" | "credentials";
 
-export default function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
+export default function LoginView({
+  onSignedIn,
+  notice,
+}: {
+  onSignedIn: () => void;
+  notice?: string | null;
+}) {
   const [step, setStep] = useState<Step>("loading");
   const [baseUrl, setBaseUrl] = useState("");
   const [email, setEmail] = useState("");
@@ -19,14 +25,16 @@ export default function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
     // Returning users (server already known, just signed out) skip straight
     // to credentials; only a genuine first run walks through the server-URL
     // step too.
-    getOpenWebUiConfig().then((config) => {
-      if (config?.baseUrl) {
-        setBaseUrl(config.baseUrl);
-        setStep("credentials");
-      } else {
-        setStep("server");
-      }
-    });
+    getOpenWebUiConfig()
+      .then((config) => {
+        if (config?.baseUrl) {
+          setBaseUrl(config.baseUrl);
+          setStep("credentials");
+        } else {
+          setStep("server");
+        }
+      })
+      .catch(() => setStep("server"));
   }, []);
 
   function handleContinue(e: FormEvent) {
@@ -95,6 +103,7 @@ export default function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
         <form className="login-card" onSubmit={handleContinue}>
           <img src="/logo.png" alt="Open DesktopUI" className="login-logo" />
           <h1>Connect to Open WebUI</h1>
+          {notice && <p className="status-error">{notice}</p>}
           <p className="hint">Enter your Open WebUI server URL to continue...</p>
           <label>
             Server URL
@@ -142,6 +151,7 @@ export default function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
       <form className="login-card" onSubmit={handleSubmit}>
         <img src="/logo.png" alt="Open DesktopUI" className="login-logo" />
         <h1>Sign in</h1>
+        {notice && <p className="status-error">{notice}</p>}
         <p className="hint server-line">
           {baseUrl}{" "}
           <button type="button" className="link-button inline" onClick={() => setStep("server")}>

@@ -18,6 +18,7 @@ import {
   OpenWebUiModel,
   rateOpenWebUiMessage,
   sendChatMessage,
+  cancelChatMessage,
   uploadOpenWebUiFile,
 } from "../lib/openWebUiClient";
 import { ensureSharedChat } from "../lib/openWebUiSync";
@@ -39,6 +40,10 @@ import {
 // Desktop notification for a finished reply, only while the pref is on and
 // the window isn't focused (no point notifying about something already on
 // screen). Never throws into the caller — notifications are a nice-to-have.
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 async function notifyReplyIfEnabled(content: string) {
   try {
     const prefs = await getAppPrefs();
@@ -101,15 +106,22 @@ export default function ChatView({
   // *existing* conversations via the sidebar) doesn't reload from disk and
   // clobber the in-flight streaming state we're already tracking locally.
   const skipNextLoadRef = useRef(false);
+  const sendLockRef = useRef(false);
+  // Id of the reply currently streaming, so the Stop button can cancel it.
+  const activeRequestRef = useRef<string | null>(null);
+  const [streaming, setStreaming] = useState(false);
   const composerRef = useRef<ComposerHandle>(null);
 
-  useEffect(() => {
-    (async () => {
+  // Loads the model and knowledge-base lists. Also behind the "Retry" button,
+  // so a temporary server problem doesn't leave the composer locked forever.
+  async function loadServerData() {
+    {
       const config = await getOpenWebUiConfig();
       if (!config?.baseUrl) return;
       setBaseUrl(config.baseUrl);
       setApiKey(config.apiKey || undefined);
 
+      setError(null);
       setLoadingModels(true);
       try {
         const [modelList, kbList] = await Promise.all([
@@ -129,7 +141,11 @@ export default function ChatView({
       } finally {
         setLoadingModels(false);
       }
-    })();
+    }
+  }
+
+  useEffect(() => {
+    loadServerData().catch((err) => setError(errorText(err)));
   }, []);
 
   useEffect(() => {
@@ -141,7 +157,12 @@ export default function ChatView({
       setMessages([]);
       return;
     }
+    // Ignore results that arrive after the user already switched to another
+    // conversation (a slow load must not overwrite the newer thread).
+    let cancelled = false;
+    setSelectedKnowledgeIds([]);
     getMessages(conversationId).then((stored) => {
+      if (cancelled) return;
       setMessages(
         stored.map((m) => {
           const storedAttachments = parseAttachments(m);
@@ -161,10 +182,17 @@ export default function ChatView({
           };
         }),
       );
+    }).catch((err) => {
+      if (!cancelled) setError(`Could not load this conversation: ${errorText(err)}`);
     });
     getConversation(conversationId).then((conv) => {
-      if (conv) setSelectedKnowledgeIds(parseKnowledgeIds(conv));
+      if (!cancelled && conv) setSelectedKnowledgeIds(parseKnowledgeIds(conv));
+    }).catch(() => {
+      // The messages load above already reports a broken database.
     });
+    return () => {
+      cancelled = true;
+    };
   }, [conversationId]);
 
   const initialMessageHandledRef = useRef(false);
@@ -216,50 +244,91 @@ export default function ChatView({
     const lastUserMsg = [...historyMessages].reverse().find((m) => m.role === "user");
 
     let acc: ChunkAccumulator = initialChunkAccumulator;
+    const requestId = crypto.randomUUID();
+    activeRequestRef.current = requestId;
+    setStreaming(true);
     try {
-      await sendChatMessage(baseUrl!, apiKey, model, history, selectedKnowledgeIds, (chunk) => {
-        acc = applyChatChunk(acc, chunk);
-        if (chunk.type === "delta") {
-          setMessages((prev) =>
-            prev.map((m) => (m.id === assistantId ? { ...m, content: acc.content } : m)),
-          );
-        } else if (chunk.type === "error") {
-          setError(acc.errorMessage!);
-        }
-      });
+      await sendChatMessage(
+        baseUrl!,
+        apiKey,
+        model,
+        history,
+        selectedKnowledgeIds,
+        (chunk) => {
+          acc = applyChatChunk(acc, chunk);
+          if (chunk.type === "delta") {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === assistantId ? { ...m, content: acc.content } : m)),
+            );
+          } else if (chunk.type === "error") {
+            setError(acc.errorMessage!);
+          }
+        },
+        requestId,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      activeRequestRef.current = null;
+      setStreaming(false);
       setSending(false);
       setMessages((prev) =>
         prev.map((m) => (m.id === assistantId ? { ...m, streaming: false } : m)),
       );
-      if (acc.promptTokens !== undefined && lastUserMsg) {
-        await updateMessageTokens(lastUserMsg.id, acc.promptTokens);
-      }
-      if (acc.content) {
-        const stored = await addMessage(convId, { role: "assistant", content: acc.content }, acc.completionTokens);
-        // The streaming placeholder used a locally-generated id — swap it
-        // for the real persisted id/timestamp so later actions (regenerate,
-        // edit) can reference this message correctly.
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId ? { ...m, id: stored.id, createdAt: stored.created_at } : m,
-          ),
-        );
-        void notifyReplyIfEnabled(acc.content);
+      // Persisting must never throw out of `finally` (it would replace the
+      // real error and surface as an unhandled rejection): report it instead.
+      try {
+        if (acc.promptTokens !== undefined && lastUserMsg) {
+          await updateMessageTokens(lastUserMsg.id, acc.promptTokens);
+        }
+        if (acc.content) {
+          const stored = await addMessage(convId, { role: "assistant", content: acc.content }, acc.completionTokens);
+          // The streaming placeholder used a locally-generated id — swap it
+          // for the real persisted id/timestamp so later actions (regenerate,
+          // edit) can reference this message correctly.
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, id: stored.id, createdAt: stored.created_at } : m,
+            ),
+          );
+          void notifyReplyIfEnabled(acc.content);
+        }
+      } catch (err) {
+        setError(`The reply could not be saved: ${errorText(err)}`);
       }
     }
   }
 
-  async function handleSend(text: string, sendAttachments: PendingAttachment[] = []) {
+  // Serializes send/edit/regenerate: `sending` only flips inside
+  // `runCompletion`, after uploads and DB writes, so a quick double Enter
+  // would otherwise start two completions. Any failure is shown instead of
+  // becoming an unhandled rejection. Resolves to whether the action ran.
+  async function withSendLock(action: () => Promise<boolean | void>): Promise<boolean> {
+    if (sendLockRef.current) return false;
+    sendLockRef.current = true;
+    setSending(true);
+    try {
+      return (await action()) !== false;
+    } catch (err) {
+      setError(errorText(err));
+      return false;
+    } finally {
+      sendLockRef.current = false;
+      setSending(false);
+    }
+  }
+
+  function handleSend(text: string, sendAttachments: PendingAttachment[] = []): Promise<boolean> {
+    return withSendLock(() => sendMessage(text, sendAttachments));
+  }
+
+  async function sendMessage(text: string, sendAttachments: PendingAttachment[]): Promise<boolean> {
     if (!baseUrl || !model) {
       setError("Configure your Open WebUI server in Settings first.");
-      return;
+      return false;
     }
-    if (!text.trim() && sendAttachments.length === 0) return;
+    if (!text.trim() && sendAttachments.length === 0) return false;
     setError(null);
-    if (sendAttachments.length > 0) onClearAttachments();
 
     let uploadedAttachments: PendingAttachment[] = [];
     if (sendAttachments.length > 0) {
@@ -269,11 +338,11 @@ export default function ChatView({
           uploadedAttachments.push({ ...attachment, uploadedId: uploaded.id });
         }
       } catch (err) {
-        setError(
-          `Could not upload attachment: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return;
+        // Attachments stay in the composer so the user can retry.
+        setError(`Could not upload attachment: ${errorText(err)}`);
+        return false;
       }
+      onClearAttachments();
     }
     const files: MessageFileRef[] | undefined = uploadedAttachments.length
       ? uploadedAttachments.map((a) => ({ type: "file", id: a.uploadedId! }))
@@ -301,34 +370,44 @@ export default function ChatView({
       },
     ];
     await runCompletion(nextMessages, convId);
+    return true;
   }
 
-  async function handleEditMessage(id: string, newText: string) {
-    const convId = conversationIdRef.current;
-    if (!convId) return;
-    const index = messages.findIndex((m) => m.id === id);
-    if (index === -1) return;
-    const target = messages[index];
-    const before = messages.slice(0, index);
-    await updateMessageContent(id, newText);
-    if (target.createdAt !== undefined) {
-      // Exclude the edited message's own row — only drop what came after it.
-      await deleteMessagesFrom(convId, target.createdAt + 1);
-    }
-    await runCompletion([...before, { ...target, content: newText }], convId);
+  function handleStop() {
+    const id = activeRequestRef.current;
+    if (id) cancelChatMessage(id).catch((err) => setError(errorText(err)));
   }
 
-  async function handleRegenerate(id: string) {
-    const convId = conversationIdRef.current;
-    if (!convId) return;
-    const index = messages.findIndex((m) => m.id === id);
-    if (index === -1 || messages[index].role !== "assistant") return;
-    const target = messages[index];
-    const before = messages.slice(0, index);
-    if (target.createdAt !== undefined) {
-      await deleteMessagesFrom(convId, target.createdAt);
-    }
-    await runCompletion(before, convId);
+  function handleEditMessage(id: string, newText: string): Promise<boolean> {
+    return withSendLock(async () => {
+      const convId = conversationIdRef.current;
+      if (!convId) return false;
+      const index = messages.findIndex((m) => m.id === id);
+      if (index === -1) return false;
+      const target = messages[index];
+      const before = messages.slice(0, index);
+      await updateMessageContent(id, newText);
+      if (target.createdAt !== undefined) {
+        // Exclude the edited message's own row — only drop what came after it.
+        await deleteMessagesFrom(convId, target.createdAt + 1);
+      }
+      await runCompletion([...before, { ...target, content: newText }], convId);
+    });
+  }
+
+  function handleRegenerate(id: string): Promise<boolean> {
+    return withSendLock(async () => {
+      const convId = conversationIdRef.current;
+      if (!convId) return false;
+      const index = messages.findIndex((m) => m.id === id);
+      if (index === -1 || messages[index].role !== "assistant") return false;
+      const target = messages[index];
+      const before = messages.slice(0, index);
+      if (target.createdAt !== undefined) {
+        await deleteMessagesFrom(convId, target.createdAt);
+      }
+      await runCompletion(before, convId);
+    });
   }
 
   async function handleVote(id: string, rating: number) {
@@ -337,9 +416,11 @@ export default function ChatView({
     const target = messages.find((m) => m.id === id);
     if (!target) return;
     const nextVote = target.vote === rating ? 0 : rating;
-    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, vote: nextVote } : m)));
-    await updateMessageVote(id, nextVote);
+    const setVote = (vote: number | undefined) =>
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, vote } : m)));
+    setVote(nextVote);
     try {
+      await updateMessageVote(id, nextVote);
       const conv = await getConversation(convId);
       if (!conv) return;
       const { chatId } = await ensureSharedChat(conv);
@@ -348,7 +429,10 @@ export default function ChatView({
       if (!remoteMessageId) throw new Error("Could not determine this message's Open WebUI id.");
       await rateOpenWebUiMessage(baseUrl, apiKey, chatId, remoteMessageId, model, nextVote);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // Roll back so the UI never shows a vote the server didn't record.
+      setVote(target.vote);
+      await updateMessageVote(id, target.vote ?? 0).catch(() => {});
+      setError(errorText(err));
     }
   }
 
@@ -364,6 +448,16 @@ export default function ChatView({
   return (
     <div className="view chat-view">
       {error && <p className="status-error">{error}</p>}
+      {!loadingModels && models.length === 0 && (
+        <p>
+          <button
+            type="button"
+            onClick={() => loadServerData().catch((err) => setError(errorText(err)))}
+          >
+            Retry loading models
+          </button>
+        </p>
+      )}
 
       <ChatThread
         messages={messages}
@@ -408,6 +502,8 @@ export default function ChatView({
         onSend={(text, atts) => handleSend(text, atts)}
         disabled={sending || !model}
         attachments={attachments}
+        streaming={streaming}
+        onStop={handleStop}
       />
       <div className="composer-toolbar">
         <div className="composer-toolbar-left">

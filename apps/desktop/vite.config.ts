@@ -25,8 +25,9 @@ export default defineConfig(() => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching `src-tauri` (and shell crash dumps,
+      // which are locked while being written and crash the watcher with EBUSY)
+      ignored: ["**/src-tauri/**", "**/*.stackdump"],
     },
   },
 }));

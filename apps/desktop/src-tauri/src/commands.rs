@@ -84,24 +84,41 @@ pub async fn list_openwebui_models(
     openwebui_client::list_models(base_url, api_key).await
 }
 
+/// Stops a running `send_chat_message` (the Stop button). A no-op when the
+/// reply already finished.
 #[tauri::command]
+pub fn cancel_chat_message(
+    request_id: String,
+    cancels: tauri::State<'_, openwebui_client::ChatCancel>,
+) {
+    cancels.cancel(&request_id);
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn send_chat_message(
     base_url: String,
     api_key: Option<String>,
     model: String,
     messages: Vec<ChatMessage>,
     knowledge_ids: Option<Vec<String>>,
+    request_id: String,
     channel: Channel<ChatChunk>,
+    cancels: tauri::State<'_, openwebui_client::ChatCancel>,
 ) -> Result<(), String> {
-    openwebui_client::stream_chat_completion(
+    let token = cancels.register(&request_id);
+    let result = openwebui_client::stream_chat_completion(
         base_url,
         api_key,
         model,
         messages,
         knowledge_ids.unwrap_or_default(),
         channel,
+        token,
     )
-    .await
+    .await;
+    cancels.unregister(&request_id);
+    result
 }
 
 #[tauri::command]
@@ -150,10 +167,116 @@ pub fn clear_sync_history() -> Result<(), String> {
     oikb_config::clear_sync_history()
 }
 
+/// Asks the user where to save (native dialog) and writes `content` there.
+/// The path comes from the dialog on the Rust side rather than from the
+/// frontend, so injected script can't use this to write to arbitrary
+/// locations. Returns `false` when the user cancels.
 #[tauri::command]
-pub fn write_text_file(path: String, content: String) -> Result<(), String> {
-    std::fs::write(&path, content).map_err(|e| format!("could not write {path}: {e}"))
-        .inspect_err(|e| log::error!("[write_text_file] {e}"))
+pub async fn save_text_file(
+    app: tauri::AppHandle,
+    default_name: String,
+    filter_name: String,
+    extension: String,
+    content: String,
+) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = app
+        .dialog()
+        .file()
+        .set_file_name(&default_name)
+        .add_filter(&filter_name, &[extension.as_str()])
+        .blocking_save_file();
+    let Some(file) = picked else {
+        return Ok(false);
+    };
+    let path = file
+        .into_path()
+        .map_err(|e| format!("invalid save path: {e}"))?;
+    std::fs::write(&path, content)
+        .map_err(|e| format!("could not write {path:?}: {e}"))
+        .inspect_err(|e| log::error!("[save_text_file] {e}"))?;
+    Ok(true)
+}
+
+/// Moves each existing `dir/<name>` to `<name>.<tag>-<timestamp>` rather than
+/// deleting it. All-or-nothing: if one rename fails, the ones already done
+/// are undone. That matters for SQLite — a main file moved away while a stale
+/// `-wal` stays behind would be replayed into the fresh database.
+fn move_aside(
+    dir: &std::path::Path,
+    names: &[&str],
+    tag: &str,
+    timestamp: u64,
+) -> Result<Vec<(std::path::PathBuf, std::path::PathBuf)>, String> {
+    let mut moved: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
+    for name in names {
+        let src = dir.join(name);
+        if !src.exists() {
+            continue;
+        }
+        let dest = dir.join(format!("{name}.{tag}-{timestamp}"));
+        if let Err(e) = std::fs::rename(&src, &dest) {
+            for (orig, backup) in moved.iter().rev() {
+                let _ = std::fs::rename(backup, orig);
+            }
+            return Err(format!("could not rename {src:?}: {e}"));
+        }
+        log::warn!("[move_aside] moved {src:?} -> {dest:?}");
+        moved.push((src, dest));
+    }
+    Ok(moved)
+}
+
+#[cfg(test)]
+mod move_aside_tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("odui-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn moves_existing_files_and_skips_missing_ones() {
+        let dir = temp_dir("moves");
+        std::fs::write(dir.join("chat.db"), "main").unwrap();
+        std::fs::write(dir.join("chat.db-wal"), "wal").unwrap();
+        let moved = move_aside(&dir, &["chat.db-wal", "chat.db-shm", "chat.db"], "corrupt", 42).unwrap();
+        assert_eq!(moved.len(), 2);
+        assert!(!dir.join("chat.db").exists());
+        assert!(!dir.join("chat.db-wal").exists());
+        assert_eq!(std::fs::read_to_string(dir.join("chat.db.corrupt-42")).unwrap(), "main");
+        assert_eq!(std::fs::read_to_string(dir.join("chat.db-wal.corrupt-42")).unwrap(), "wal");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rolls_back_when_a_later_rename_fails() {
+        let dir = temp_dir("rollback");
+        std::fs::write(dir.join("chat.db"), "main").unwrap();
+        std::fs::write(dir.join("chat.db-wal"), "wal").unwrap();
+        // A non-empty directory squatting on the main file's backup name makes
+        // that rename fail after the WAL has already been moved.
+        let blocker = dir.join("chat.db.corrupt-7");
+        std::fs::create_dir_all(&blocker).unwrap();
+        std::fs::write(blocker.join("keep"), "x").unwrap();
+
+        let result = move_aside(&dir, &["chat.db-wal", "chat.db"], "corrupt", 7);
+        assert!(result.is_err());
+        // Nothing was lost or half-moved: both originals are back in place.
+        assert_eq!(std::fs::read_to_string(dir.join("chat.db")).unwrap(), "main");
+        assert_eq!(std::fs::read_to_string(dir.join("chat.db-wal")).unwrap(), "wal");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_vault_is_not_an_error() {
+        let dir = temp_dir("novault");
+        assert!(move_aside(&dir, &["vault.hold"], "bak", 1).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// Last-resort recovery for a `chat.db` too corrupted to open/query: moves
@@ -175,15 +298,63 @@ pub fn reset_chat_db(app: tauri::AppHandle) -> Result<(), String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    for suffix in ["", "-wal", "-shm"] {
-        let src = dir.join(format!("chat.db{suffix}"));
-        if src.exists() {
-            let dest = dir.join(format!("chat.db{suffix}.corrupt-{timestamp}"));
-            std::fs::rename(&src, &dest).map_err(|e| format!("could not rename {src:?}: {e}"))?;
-            log::warn!("[reset_chat_db] moved {src:?} -> {dest:?}");
+    // WAL/SHM siblings first and the main file last (see `move_aside`).
+    move_aside(
+        &dir,
+        &["chat.db-wal", "chat.db-shm", "chat.db"],
+        "corrupt",
+        timestamp,
+    )?;
+    restart_app(&app);
+    Ok(())
+}
+
+/// `AppHandle::restart` starts the new process while this one is still alive,
+/// so `tauri-plugin-single-instance` makes the new one quit immediately and
+/// the app just seems to do nothing. On Windows we therefore launch the new
+/// instance after a short delay (once this process has exited) and then exit.
+fn restart_app(app: &tauri::AppHandle) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        if let Ok(exe) = tauri::utils::platform::current_exe() {
+            let spawned = std::process::Command::new("cmd")
+                .raw_arg(format!(
+                    "/C ping -n 3 127.0.0.1 >nul & start \"\" \"{}\"",
+                    exe.display()
+                ))
+                .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+                .spawn();
+            match spawned {
+                Ok(_) => {
+                    app.exit(0);
+                    return;
+                }
+                Err(e) => log::error!("[restart_app] delayed spawn failed: {e}"),
+            }
         }
     }
     app.restart()
+}
+
+/// Recovery for a `vault.hold` that can't be decrypted (e.g. `BadFileKey`
+/// because the stored passphrase no longer matches): moves it aside instead
+/// of deleting it so the frontend can create a fresh vault. Unlike
+/// `reset_chat_db` no restart is needed — a failed `Stronghold.load` leaves
+/// nothing registered on the Rust side.
+#[tauri::command]
+pub fn reset_vault(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("could not resolve app local data dir: {e}"))?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    move_aside(&dir, &["vault.hold"], "bak", timestamp)?;
+    Ok(())
 }
 
 /// Forwards a frontend-side log line into the same log sink `tauri-plugin-log`
