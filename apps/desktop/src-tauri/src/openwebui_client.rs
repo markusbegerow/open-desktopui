@@ -530,6 +530,53 @@ pub async fn rate_message(
     Ok(())
 }
 
+/// Per-request cancellation for streaming chats, keyed by a request id the
+/// frontend chooses, so stopping one window's reply never stops another's.
+#[derive(Default)]
+pub struct ChatCancel(std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<CancelToken>>>);
+
+#[derive(Default)]
+pub struct CancelToken {
+    flag: std::sync::atomic::AtomicBool,
+    notify: tokio::sync::Notify,
+}
+
+impl ChatCancel {
+    fn lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, std::sync::Arc<CancelToken>>> {
+        self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub fn register(&self, id: &str) -> std::sync::Arc<CancelToken> {
+        let token = std::sync::Arc::new(CancelToken::default());
+        self.lock().insert(id.to_string(), token.clone());
+        token
+    }
+
+    pub fn unregister(&self, id: &str) {
+        self.lock().remove(id);
+    }
+
+    /// Returns whether a request with this id was still running.
+    pub fn cancel(&self, id: &str) -> bool {
+        match self.lock().get(id) {
+            Some(token) => {
+                token.flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                token.notify.notify_waiters();
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+impl CancelToken {
+    fn is_cancelled(&self) -> bool {
+        self.flag.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
 pub async fn stream_chat_completion(
     base_url: String,
     api_key: Option<String>,
@@ -537,6 +584,7 @@ pub async fn stream_chat_completion(
     messages: Vec<ChatMessage>,
     knowledge_ids: Vec<String>,
     channel: Channel<ChatChunk>,
+    cancel: std::sync::Arc<CancelToken>,
 ) -> Result<(), String> {
     let url = format!("{}/api/chat/completions", base_url.trim_end_matches('/'));
     let mut body = serde_json::json!({ "model": model, "messages": messages, "stream": true });
@@ -559,12 +607,34 @@ pub async fn stream_chat_completion(
     if !files.is_empty() {
         body["files"] = Value::Array(files);
     }
-    let mut req = reqwest::Client::new().post(&url).json(&body);
+    // No overall timeout (replies can legitimately stream for minutes), but
+    // an unreachable server must fail fast instead of hanging the composer.
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut req = client.post(&url).json(&body);
     if let Some(key) = api_key.filter(|k| !k.is_empty()) {
         req = req.bearer_auth(key);
     }
 
-    let resp = match req.send().await {
+    // Registered before awaiting so a stop pressed while connecting works.
+    let notified = cancel.notify.notified();
+    tokio::pin!(notified);
+    notified.as_mut().enable();
+    if cancel.is_cancelled() {
+        let _ = channel.send(SseParser::default().done_chunk());
+        return Ok(());
+    }
+    let sent = tokio::select! {
+        r = req.send() => Some(r),
+        _ = &mut notified => None,
+    };
+    let Some(sent) = sent else {
+        let _ = channel.send(SseParser::default().done_chunk());
+        return Ok(());
+    };
+    let resp = match sent {
         Ok(r) => r,
         Err(e) => {
             let _ = channel.send(ChatChunk::Error {
@@ -585,11 +655,26 @@ pub async fn stream_chat_completion(
     }
 
     let mut stream = resp.bytes_stream();
-    let mut buf = String::new();
-    let mut last_prompt_tokens: Option<u32> = None;
-    let mut last_completion_tokens: Option<u32> = None;
+    let mut parser = SseParser::default();
 
-    while let Some(chunk) = stream.next().await {
+    loop {
+        // Enabled before the flag check so a cancel can't slip in between.
+        let notified = cancel.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if cancel.is_cancelled() {
+            // User pressed Stop: end cleanly, keeping what has streamed so far.
+            let _ = channel.send(parser.done_chunk());
+            return Ok(());
+        }
+        let next = tokio::select! {
+            chunk = stream.next() => chunk,
+            _ = &mut notified => {
+                let _ = channel.send(parser.done_chunk());
+                return Ok(());
+            }
+        };
+        let Some(chunk) = next else { break };
         let bytes = match chunk {
             Ok(b) => b,
             Err(e) => {
@@ -599,76 +684,251 @@ pub async fn stream_chat_completion(
                 return Ok(());
             }
         };
-        buf.push_str(&String::from_utf8_lossy(&bytes));
-
-        while let Some(pos) = buf.find('\n') {
-            let line = buf[..pos].trim_end_matches('\r').to_string();
-            buf.drain(..=pos);
-
-            let Some(data) = line.strip_prefix("data: ") else {
-                continue;
-            };
-            if data == "[DONE]" {
-                let _ = channel.send(ChatChunk::Done {
-                    prompt_tokens: last_prompt_tokens,
-                    completion_tokens: last_completion_tokens,
-                });
-                return Ok(());
-            }
-            if data.is_empty() {
-                continue;
-            }
-
-            match serde_json::from_str::<Value>(data) {
-                Ok(json) => {
-                    if let Some(content) = json
-                        .get("choices")
-                        .and_then(|c| c.get(0))
-                        .and_then(|c| c.get("delta"))
-                        .and_then(|d| d.get("content"))
-                        .and_then(|c| c.as_str())
-                    {
-                        if !content.is_empty() {
-                            let _ = channel.send(ChatChunk::Delta {
-                                content: content.to_string(),
-                            });
-                        }
-                    }
-                    // llama.cpp-style `timings` on the terminal chunk (see module docs).
-                    if let Some(timings) = json.get("timings") {
-                        last_prompt_tokens = timings
-                            .get("prompt_n")
-                            .and_then(|v| v.as_u64())
-                            .map(|v| v as u32)
-                            .or(last_prompt_tokens);
-                        last_completion_tokens = timings
-                            .get("predicted_n")
-                            .and_then(|v| v.as_u64())
-                            .map(|v| v as u32)
-                            .or(last_completion_tokens);
-                    }
-                    // OpenAI-style `usage` (present on some providers even mid-stream).
-                    if let Some(usage) = json.get("usage") {
-                        last_prompt_tokens = usage
-                            .get("prompt_tokens")
-                            .and_then(|v| v.as_u64())
-                            .map(|v| v as u32)
-                            .or(last_prompt_tokens);
-                        last_completion_tokens = usage
-                            .get("completion_tokens")
-                            .and_then(|v| v.as_u64())
-                            .map(|v| v as u32)
-                            .or(last_completion_tokens);
-                    }
-                }
-                Err(_) => continue,
-            }
+        if forward_events(parser.feed(&bytes), &parser, &channel) {
+            return Ok(());
         }
     }
 
-    let _ = channel.send(ChatChunk::Done {
-        prompt_tokens: last_prompt_tokens,
-        completion_tokens: last_completion_tokens,
-    });
+    // EOF: a final `data:` line may lack its trailing newline.
+    if forward_events(parser.finish(), &parser, &channel) {
+        return Ok(());
+    }
+    if parser.finished_cleanly() {
+        let _ = channel.send(parser.done_chunk());
+    } else {
+        let _ = channel.send(ChatChunk::Error {
+            message: "the connection closed before the reply was complete".to_string(),
+        });
+    }
     Ok(())
+}
+
+/// Sends parsed events to the frontend. Returns `true` when the stream is
+/// over (`[DONE]`, a server error, or the frontend dropped the channel — in
+/// which case we stop pulling a generation nobody is reading).
+fn forward_events(events: Vec<SseEvent>, parser: &SseParser, channel: &Channel<ChatChunk>) -> bool {
+    for event in events {
+        let (chunk, last) = match event {
+            SseEvent::Delta(content) => (ChatChunk::Delta { content }, false),
+            SseEvent::Error(message) => (ChatChunk::Error { message }, true),
+            SseEvent::Done => (parser.done_chunk(), true),
+        };
+        if channel.send(chunk).is_err() || last {
+            return true;
+        }
+    }
+    false
+}
+
+enum SseEvent {
+    Delta(String),
+    Error(String),
+    Done,
+}
+
+/// Incremental parser for Open WebUI's SSE completion stream. Works on bytes
+/// and only decodes complete lines, so a multi-byte character split across
+/// two network chunks is never corrupted.
+#[derive(Default)]
+struct SseParser {
+    buf: Vec<u8>,
+    prompt_tokens: Option<u32>,
+    completion_tokens: Option<u32>,
+    saw_finish_reason: bool,
+}
+
+impl SseParser {
+    fn feed(&mut self, bytes: &[u8]) -> Vec<SseEvent> {
+        self.buf.extend_from_slice(bytes);
+        let mut events = Vec::new();
+        while let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = self.buf.drain(..=pos).collect();
+            self.handle_line(&line, &mut events);
+        }
+        events
+    }
+
+    /// Processes whatever is left after EOF as a last, unterminated line.
+    fn finish(&mut self) -> Vec<SseEvent> {
+        let mut events = Vec::new();
+        if !self.buf.is_empty() {
+            let line = std::mem::take(&mut self.buf);
+            self.handle_line(&line, &mut events);
+        }
+        events
+    }
+
+    /// EOF without `[DONE]` is only a normal end if the model reported a
+    /// finish reason; otherwise the reply was cut off.
+    fn finished_cleanly(&self) -> bool {
+        self.saw_finish_reason
+    }
+
+    fn done_chunk(&self) -> ChatChunk {
+        ChatChunk::Done {
+            prompt_tokens: self.prompt_tokens,
+            completion_tokens: self.completion_tokens,
+        }
+    }
+
+    fn handle_line(&mut self, raw: &[u8], events: &mut Vec<SseEvent>) {
+        let line = String::from_utf8_lossy(raw);
+        let line = line.trim_end_matches(['\r', '\n']);
+        // SSE allows `data:` with or without a following space.
+        let Some(data) = line.strip_prefix("data:") else {
+            return;
+        };
+        let data = data.strip_prefix(' ').unwrap_or(data);
+        if data == "[DONE]" {
+            events.push(SseEvent::Done);
+            return;
+        }
+        if data.is_empty() {
+            return;
+        }
+        let Ok(json) = serde_json::from_str::<Value>(data) else {
+            return;
+        };
+        if let Some(err) = json.get("error") {
+            let message = err
+                .get("message")
+                .and_then(|m| m.as_str())
+                .or_else(|| err.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| err.to_string());
+            events.push(SseEvent::Error(message));
+            return;
+        }
+        let choice = json.get("choices").and_then(|c| c.get(0));
+        if let Some(content) = choice
+            .and_then(|c| c.get("delta"))
+            .and_then(|d| d.get("content"))
+            .and_then(|c| c.as_str())
+        {
+            if !content.is_empty() {
+                events.push(SseEvent::Delta(content.to_string()));
+            }
+        }
+        if choice
+            .and_then(|c| c.get("finish_reason"))
+            .is_some_and(|f| !f.is_null())
+        {
+            self.saw_finish_reason = true;
+        }
+        // llama.cpp-style `timings` on the terminal chunk (see module docs).
+        if let Some(timings) = json.get("timings") {
+            self.prompt_tokens = timings
+                .get("prompt_n")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .or(self.prompt_tokens);
+            self.completion_tokens = timings
+                .get("predicted_n")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .or(self.completion_tokens);
+        }
+        // OpenAI-style `usage` (present on some providers even mid-stream).
+        if let Some(usage) = json.get("usage") {
+            self.prompt_tokens = usage
+                .get("prompt_tokens")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .or(self.prompt_tokens);
+            self.completion_tokens = usage
+                .get("completion_tokens")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .or(self.completion_tokens);
+        }
+    }
+}
+
+#[cfg(test)]
+mod sse_tests {
+    use super::*;
+
+    #[test]
+    fn cancel_targets_only_the_given_request() {
+        let state = ChatCancel::default();
+        let a = state.register("a");
+        let b = state.register("b");
+        assert!(state.cancel("a"));
+        assert!(a.is_cancelled());
+        assert!(!b.is_cancelled());
+        state.unregister("a");
+        assert!(!state.cancel("a"));
+    }
+
+    fn deltas(events: &[SseEvent]) -> String {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                SseEvent::Delta(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn multibyte_character_split_across_chunks_survives() {
+        let line = "data: {\"choices\":[{\"delta\":{\"content\":\"Grüße 🙂\"}}]}\n";
+        let bytes = line.as_bytes();
+        // Cut inside the two-byte "ü" and inside the four-byte emoji.
+        let ue = line.find('ü').unwrap() + 1;
+        let emoji = line.find('🙂').unwrap() + 2;
+        let mut parser = SseParser::default();
+        let mut out = String::new();
+        for part in [&bytes[..ue], &bytes[ue..emoji], &bytes[emoji..]] {
+            out.push_str(&deltas(&parser.feed(part)));
+        }
+        assert_eq!(out, "Grüße 🙂");
+    }
+
+    #[test]
+    fn data_prefix_without_space_and_crlf_are_accepted() {
+        let mut parser = SseParser::default();
+        let events = parser.feed(b"data:{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\r\n");
+        assert_eq!(deltas(&events), "hi");
+    }
+
+    #[test]
+    fn last_line_without_newline_is_processed_on_finish() {
+        let mut parser = SseParser::default();
+        assert!(parser
+            .feed(b"data: {\"timings\":{\"prompt_n\":3,\"predicted_n\":7}}")
+            .is_empty());
+        parser.finish();
+        match parser.done_chunk() {
+            ChatChunk::Done {
+                prompt_tokens,
+                completion_tokens,
+            } => {
+                assert_eq!(prompt_tokens, Some(3));
+                assert_eq!(completion_tokens, Some(7));
+            }
+            _ => panic!("expected Done"),
+        }
+    }
+
+    #[test]
+    fn mid_stream_error_object_is_reported() {
+        let mut parser = SseParser::default();
+        let events = parser.feed(b"data: {\"error\":{\"message\":\"model overloaded\"}}\n");
+        assert!(matches!(&events[..], [SseEvent::Error(m)] if m == "model overloaded"));
+    }
+
+    #[test]
+    fn done_marker_ends_stream_and_eof_without_finish_is_truncation() {
+        let mut parser = SseParser::default();
+        assert!(matches!(&parser.feed(b"data: [DONE]\n")[..], [SseEvent::Done]));
+
+        let mut cut = SseParser::default();
+        cut.feed(b"data: {\"choices\":[{\"delta\":{\"content\":\"par\"}}]}\n");
+        assert!(!cut.finished_cleanly());
+
+        let mut ok = SseParser::default();
+        ok.feed(b"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n");
+        assert!(ok.finished_cleanly());
+    }
 }

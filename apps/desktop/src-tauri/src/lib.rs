@@ -8,7 +8,7 @@ mod openwebui_client;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
 
@@ -31,6 +31,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
+                let _ = window.unminimize();
                 let _ = window.set_focus();
             }
         }))
@@ -47,6 +48,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(daemon_sidecar::DaemonState::default())
         .manage(KeepRunningInTray(AtomicBool::new(true)))
+        .manage(openwebui_client::ChatCancel::default())
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations(
@@ -169,10 +171,28 @@ pub fn run() {
             let close_item = MenuItem::with_id(app, "close", "Close", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &close_item])?;
 
+            // The only tray: `tauri.conf.json` must not declare a `trayIcon`
+            // too, or Windows shows two icons. Left click opens the window,
+            // right click shows the menu.
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("Open DesktopUI")
                 .menu(&menu)
-                .show_menu_on_left_click(true)
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        if let Some(window) = tray.app_handle().get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
@@ -200,6 +220,7 @@ pub fn run() {
             commands::test_openwebui_connection,
             commands::list_openwebui_models,
             commands::send_chat_message,
+            commands::cancel_chat_message,
             commands::set_oikb_global_config,
             commands::get_oikb_global_config,
             commands::write_oikb_sources,
@@ -215,10 +236,11 @@ pub fn run() {
             commands::upload_openwebui_file,
             commands::create_openwebui_chat,
             commands::rate_openwebui_message,
-            commands::write_text_file,
+            commands::save_text_file,
             commands::set_keep_running_in_tray,
             commands::frontend_log,
             commands::reset_chat_db,
+            commands::reset_vault,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

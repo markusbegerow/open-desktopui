@@ -1,7 +1,7 @@
 import { KeyboardEvent, useEffect, useRef, useState } from "react";
 import { appDataDir } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
-import { confirm, save } from "@tauri-apps/plugin-dialog";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { disable as disableAutostart, enable as enableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
@@ -12,9 +12,10 @@ import {
   setOpenWebUiConfig,
   signOut,
 } from "../lib/settingsStore";
-import { clearHistory, getMessages, listConversations } from "../lib/chatHistory";
+import { clearHistory, closeChatDb, getMessages, listConversations } from "../lib/chatHistory";
 import { applyChatTextSize, applyTheme, Theme } from "../lib/theme";
 import type { AppPrefs } from "../lib/settingsStore";
+import { consumeVaultResetNotice } from "../lib/secureStore";
 import { getCurrentUser, listModels, OpenWebUiModel } from "../lib/openWebUiClient";
 import { Language, resolveLanguage, useTranslation } from "../lib/i18n";
 import { logError } from "../lib/log";
@@ -47,6 +48,7 @@ export default function SettingsView({ activeTab, onTabChange, language, onLangu
   const [historyCleared, setHistoryCleared] = useState(false);
   const [repairingDb, setRepairingDb] = useState(false);
   const [dbRepaired, setDbRepaired] = useState(false);
+  const [repairError, setRepairError] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>("system");
   const [micMode, setMicMode] = useState<NonNullable<AppPrefs["micMode"]>>("toggle");
   const [chatTextSize, setChatTextSize] = useState<NonNullable<AppPrefs["chatTextSize"]>>("medium");
@@ -71,6 +73,11 @@ export default function SettingsView({ activeTab, onTabChange, language, onLangu
     (async () => {
       try {
         const owui = await getOpenWebUiConfig();
+        if (consumeVaultResetNotice()) {
+          setLoadError(
+            "the stored credentials were unreadable and have been reset — please sign in again",
+          );
+        }
         if (owui) {
           setBaseUrl(owui.baseUrl);
           setApiKey(owui.apiKey);
@@ -243,11 +250,36 @@ export default function SettingsView({ activeTab, onTabChange, language, onLangu
     );
     if (!ok) return;
     setRepairingDb(true);
-    setDbRepaired(true);
-    // Doesn't return — the command itself restarts the whole app process
-    // once the corrupted file is moved aside (see `reset_chat_db` in
-    // commands.rs for why a plain webview reload isn't enough here).
-    await invoke("reset_chat_db");
+    setRepairError(null);
+    try {
+      // Normally doesn't return — the command restarts the whole app process
+      // once the corrupted file is moved aside (see `reset_chat_db` in
+      // commands.rs for why a plain webview reload isn't enough here).
+      await closeChatDb();
+      await invoke("reset_chat_db");
+      setDbRepaired(true);
+    } catch (err) {
+      setRepairingDb(false);
+      setRepairError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // Manual counterpart to the automatic recovery in `secureStore.ts`: moves
+  // the encrypted credential vault aside, then reloads the webview so the
+  // cached (unreadable) vault handle is dropped and a fresh one is created.
+  async function handleResetVault() {
+    const ok = await confirm(
+      "This deletes the saved credentials (Open WebUI sign-in, API keys) and you will have to sign in again. Chat history is not affected. Continue?",
+      { title: "Reset saved credentials", kind: "warning" },
+    );
+    if (!ok) return;
+    setRepairError(null);
+    try {
+      await invoke("reset_vault");
+      window.location.reload();
+    } catch (err) {
+      setRepairError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function handleExportAll() {
@@ -260,12 +292,13 @@ export default function SettingsView({ activeTab, onTabChange, language, onLangu
         const messages = await getMessages(conversation.id);
         data.push({ conversation, messages });
       }
-      const path = await save({
-        defaultPath: "chat-history-export.json",
-        filters: [{ name: "JSON", extensions: ["json"] }],
+      const saved = await invoke<boolean>("save_text_file", {
+        defaultName: "chat-history-export.json",
+        filterName: "JSON",
+        extension: "json",
+        content: JSON.stringify(data, null, 2),
       });
-      if (!path) return;
-      await invoke("write_text_file", { path, content: JSON.stringify(data, null, 2) });
+      if (!saved) return;
       setExportAllStatus("Exported");
     } catch (err) {
       setExportAllStatus(err instanceof Error ? err.message : String(err));
@@ -599,8 +632,15 @@ export default function SettingsView({ activeTab, onTabChange, language, onLangu
             </div>
             <p className="hint">
               Only use this if the app is failing to load your chat history. It deletes all local
-              chat history and restarts the app.
+              chat history and restarts the app. It does not fix unreadable saved credentials —
+              use the button below for that.
             </p>
+            <div className="row">
+              <button type="button" onClick={handleResetVault}>
+                Reset saved credentials
+              </button>
+              {repairError && <span className="status-error">{repairError}</span>}
+            </div>
             <div className="row">
               <button type="button" onClick={handleShowDataFolder} disabled={!dataDir}>
                 {t("settings.showInFolder")}

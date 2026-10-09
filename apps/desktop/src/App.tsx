@@ -9,6 +9,7 @@ import SettingsView, { SettingsTab } from "./components/SettingsView";
 import Sidebar, { View } from "./components/Sidebar";
 import { getCurrentUser } from "./lib/openWebUiClient";
 import { getAppPrefs, getOpenWebUiConfig, setAppPrefs } from "./lib/settingsStore";
+import { consumeVaultResetNotice } from "./lib/secureStore";
 import { applyChatTextSize, applyTheme } from "./lib/theme";
 import { classifyAttachment, isRejected, PendingAttachment } from "./lib/attachments";
 import { I18nProvider, Language, resolveLanguage } from "./lib/i18n";
@@ -37,6 +38,7 @@ function App() {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [signedIn, setSignedIn] = useState(false);
   const [language, setLanguage] = useState<Language>("en");
+  const [bootNotice, setBootNotice] = useState<string | null>(null);
 
   useEffect(() => {
     getAppPrefs().then((prefs) => {
@@ -64,7 +66,21 @@ function App() {
         }
         setLanguage(resolveLanguage(prefs?.language, detectedLanguage));
       })
-      .finally(() => setCheckingAuth(false));
+      .catch((err) => {
+        setBootNotice(
+          `Could not load saved settings: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      })
+      .finally(() => {
+        // The vault may have been reset while loading the config above; tell
+        // the user on the screen they land on (login) why they were signed out.
+        if (consumeVaultResetNotice()) {
+          setBootNotice(
+            "Your stored credentials were unreadable and have been reset — please sign in again.",
+          );
+        }
+        setCheckingAuth(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -145,7 +161,7 @@ function App() {
   }
 
   if (!signedIn) {
-    return <LoginView onSignedIn={() => setSignedIn(true)} />;
+    return <LoginView notice={bootNotice} onSignedIn={() => setSignedIn(true)} />;
   }
 
   return (

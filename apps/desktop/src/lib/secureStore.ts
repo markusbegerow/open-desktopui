@@ -17,6 +17,7 @@
 import { Client, Stronghold } from "@tauri-apps/plugin-stronghold";
 import { appLocalDataDir, join } from "@tauri-apps/api/path";
 import { load } from "@tauri-apps/plugin-store";
+import { invoke } from "@tauri-apps/api/core";
 
 const VAULT_FILE = "vault.hold";
 const CLIENT_NAME = "opendesktopui";
@@ -43,7 +44,41 @@ async function getOrCreatePassphrase(): Promise<string> {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   const passphrase = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   await store.set(PASSPHRASE_KEY, passphrase);
+  // Flush now rather than relying on autoSave's debounce: if the app is
+  // killed before that fires, the vault would later be encrypted with a
+  // passphrase that was never persisted (-> BadFileKey on next launch).
+  await store.save();
   return passphrase;
+}
+
+// Set when an unreadable vault was moved aside and recreated, so the UI can
+// tell the user their saved credentials are gone and they must sign in again.
+let vaultWasReset = false;
+export function consumeVaultResetNotice(): boolean {
+  const was = vaultWasReset;
+  vaultWasReset = false;
+  return was;
+}
+
+// The snapshot can't be decrypted with the current passphrase/salt (the age
+// layer reports `BadFileKey`). Only this case justifies discarding the vault —
+// a locked file or permission error is transient and must not wipe it.
+export function isVaultDecryptError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /BadFileKey|failed to decode\/decrypt/i.test(message);
+}
+
+async function loadStronghold(path: string, passphrase: string): Promise<Stronghold> {
+  try {
+    return await Stronghold.load(path, passphrase);
+  } catch (err) {
+    if (!isVaultDecryptError(err)) throw err;
+    // Move the unreadable snapshot aside and start fresh.
+    console.warn("vault could not be decrypted, resetting:", err);
+    await invoke("reset_vault");
+    vaultWasReset = true;
+    return await Stronghold.load(path, passphrase);
+  }
 }
 
 async function getVault(): Promise<VaultHandle> {
@@ -51,7 +86,7 @@ async function getVault(): Promise<VaultHandle> {
     vaultPromise = (async () => {
       const passphrase = await getOrCreatePassphrase();
       const path = await join(await appLocalDataDir(), VAULT_FILE);
-      const stronghold = await Stronghold.load(path, passphrase);
+      const stronghold = await loadStronghold(path, passphrase);
       let client: Client;
       try {
         client = await stronghold.loadClient(CLIENT_NAME);

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import ConfirmDialog from "./ConfirmDialog";
 import ConversationMenu from "./ConversationMenu";
@@ -176,12 +175,13 @@ export default function Sidebar({
         lines.push(m.role === "user" ? "**You:**" : "**Assistant:**", "", m.content, "");
       }
       const safeName = title.replace(/[\\/:*?"<>|]/g, "_");
-      const path = await save({
-        defaultPath: `${safeName}.md`,
-        filters: [{ name: "Markdown", extensions: ["md"] }],
+      const saved = await invoke<boolean>("save_text_file", {
+        defaultName: `${safeName}.md`,
+        filterName: "Markdown",
+        extension: "md",
+        content: lines.join("\n"),
       });
-      if (!path) return;
-      await invoke("write_text_file", { path, content: lines.join("\n") });
+      if (!saved) return;
       setShareStatus("Exported");
     } catch (err) {
       setShareStatus(err instanceof Error ? err.message : String(err));

@@ -118,8 +118,23 @@ export function sendChatMessage(
   messages: ChatMessage[],
   knowledgeIds: string[],
   onChunk: (chunk: ChatChunk) => void,
+  requestId: string = crypto.randomUUID(),
 ): Promise<void> {
   const channel = new Channel<ChatChunk>();
   channel.onmessage = onChunk;
-  return invoke("send_chat_message", { baseUrl, apiKey, model, messages, knowledgeIds, channel });
+  return invoke("send_chat_message", {
+    baseUrl,
+    apiKey,
+    model,
+    messages,
+    knowledgeIds,
+    requestId,
+    channel,
+  });
+}
+
+// Stops the reply started with the same `requestId`. The stream then ends
+// with a normal `done` chunk, so what has streamed so far is kept.
+export function cancelChatMessage(requestId: string): Promise<void> {
+  return invoke("cancel_chat_message", { requestId });
 }

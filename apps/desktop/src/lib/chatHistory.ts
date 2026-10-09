@@ -24,6 +24,26 @@ function getDb(): Promise<Database> {
   return dbPromise;
 }
 
+// Closes the SQLite pool so the OS releases `chat.db` (Windows refuses to
+// rename a file that's still open) — used before the "Repair local database"
+// reset moves it aside. Best-effort: a database too corrupted to even open
+// has nothing to close.
+export async function closeChatDb(): Promise<void> {
+  // Detach the handle first so a concurrent `getDb()` opens a fresh pool
+  // instead of receiving the one being closed.
+  const pending = dbPromise;
+  dbPromise = null;
+  if (!pending) return; // never opened, so nothing holds the file
+  let db: Database;
+  try {
+    db = await pending;
+  } catch {
+    return; // the pool never opened, so nothing holds the file
+  }
+  // A real close failure must surface: the caller is about to move the file.
+  await db.close();
+}
+
 async function currentAccountId(): Promise<string> {
   const config = await getOpenWebUiConfig();
   return config?.accountId ?? "unscoped";
