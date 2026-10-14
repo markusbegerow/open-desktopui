@@ -66,17 +66,16 @@ jobs:
       # Real release: only when triggered by pushing a version tag.
       #
       # Code-signing secrets (see docs/RELEASING.md's "Adding code signing
-      # later"): left as plain GitHub secrets references. tauri-action treats
-      # an unset/empty signing var the same as "not configured" and produces
-      # an unsigned build exactly as it does today — so these are safe to
-      # leave wired in permanently; the day real certificates are added, the
-      # only remaining step is populating these secrets in the repo, no
-      # workflow change needed.
-      - name: Build and publish draft release
+      # later"). An unset secret expands to an EMPTY STRING, and the Tauri CLI
+      # treats an empty-but-defined APPLE_CERTIFICATE as "configured" and
+      # fails trying to import it. So the signing vars are only exported into
+      # the environment when their certificate secret is actually non-empty;
+      # otherwise the build stays unsigned. Populating the secrets in the repo
+      # is the only step needed to turn signing on.
+      - name: Export signing env (only if configured)
         if: startsWith(github.ref, 'refs/tags/')
-        uses: tauri-apps/tauri-action@v0
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -85,6 +84,29 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          export_group() {
+            local gate="$1"; shift
+            [ -n "${!gate}" ] || return 0
+            for name in "$@"; do
+              if [ -n "${!name}" ]; then
+                {
+                  echo "$name<<__EOF_SECRET__"
+                  echo "${!name}"
+                  echo "__EOF_SECRET__"
+                } >> "$GITHUB_ENV"
+              fi
+            done
+          }
+          export_group WINDOWS_CERTIFICATE WINDOWS_CERTIFICATE WINDOWS_CERTIFICATE_PASSWORD
+          export_group APPLE_CERTIFICATE APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
+            APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+
+      - name: Build and publish draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Signs the updater manifest (latest.json) so already-installed
           # copies can verify a downloaded update before applying it — see
           # docs/RELEASING.md's "Auto-updates" section for how this keypair
