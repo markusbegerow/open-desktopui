@@ -64,8 +64,72 @@ fn free_port_8080() -> Option<String> {
     }
     #[cfg(not(windows))]
     {
-        None
+        free_port_8080_unix()
     }
+}
+
+/// PIDs listening on TCP port 8080: `lsof` (macOS, most Linux), falling back
+/// to `ss` where lsof isn't installed.
+#[cfg(not(windows))]
+fn listening_pids_8080() -> Vec<u32> {
+    if let Ok(out) = StdCommand::new("lsof")
+        .args(["-nP", "-iTCP:8080", "-sTCP:LISTEN", "-t"])
+        .output()
+    {
+        return String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| l.trim().parse().ok())
+            .collect();
+    }
+    let Ok(out) = StdCommand::new("ss").args(["-ltnpH", "sport = :8080"]).output() else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .split("pid=")
+        .skip(1)
+        .filter_map(|rest| {
+            rest.chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse()
+                .ok()
+        })
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn process_name(pid: u32) -> String {
+    StdCommand::new("ps")
+        .args(["-o", "comm=", "-p", &pid.to_string()])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Kills `pid` and all of its descendants (children first).
+#[cfg(not(windows))]
+fn kill_tree_unix(pid: u32) {
+    if let Ok(out) = StdCommand::new("pgrep").args(["-P", &pid.to_string()]).output() {
+        for child in String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.trim().parse().ok()) {
+            kill_tree_unix(child);
+        }
+    }
+    let _ = StdCommand::new("kill").args(["-9", &pid.to_string()]).output();
+}
+
+#[cfg(not(windows))]
+fn free_port_8080_unix() -> Option<String> {
+    for pid in listening_pids_8080() {
+        // `comm` is the executable basename ("oikb", "python3.12", "uv", ...).
+        let name = process_name(pid);
+        let base = name.rsplit('/').next().unwrap_or(&name);
+        if base.starts_with("oikb") || base.starts_with("python") || base.starts_with("uv") {
+            kill_tree_unix(pid);
+        } else if !base.is_empty() {
+            return Some(base.to_string());
+        }
+    }
+    None
 }
 
 /// Stops and forgets our own tracked child, if any, together with its
@@ -91,6 +155,8 @@ pub fn kill_daemon(app: &AppHandle) {
                 .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
                 .output();
         }
+        #[cfg(not(windows))]
+        kill_tree_unix(child.pid());
         let _ = child.kill();
     }
 }

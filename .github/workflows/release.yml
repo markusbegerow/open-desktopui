@@ -63,6 +63,32 @@ jobs:
         working-directory: apps/desktop
         run: npm ci
 
+      # Freeze oikb into a standalone binary (PyInstaller doesn't cross-compile,
+      # so each matrix runner builds its own) and place it where Tauri's
+      # externalBin expects it: binaries/oikb-<target-triple>[.exe]. The
+      # externalBin entry lives in tauri.sidecar.conf.json and is merged in
+      # only for these CI builds (--config below), so plain `tauri dev` /
+      # `cargo check` don't need the binary to exist.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build oikb sidecar
+        shell: bash
+        run: |
+          cd packaging/oikb-sidecar
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            powershell -NoProfile -ExecutionPolicy Bypass -File ./build.ps1
+            EXT=".exe"
+          else
+            ./build.sh
+            EXT=""
+          fi
+          TRIPLE=$(rustc -Vv | sed -n 's/^host: //p')
+          mkdir -p ../../apps/desktop/src-tauri/binaries
+          cp "dist/oikb$EXT" "../../apps/desktop/src-tauri/binaries/oikb-$TRIPLE$EXT"
+          # Smoke test: the frozen binary must at least start.
+          "dist/oikb$EXT" --help
+
       # Real release: only when triggered by pushing a version tag.
       #
       # Code-signing secrets (see docs/RELEASING.md's "Adding code signing
@@ -130,6 +156,7 @@ jobs:
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
+          args: --config src-tauri/tauri.sidecar.conf.json
 
       # Manual test run (workflow_dispatch, no tag): build only, no release
       # created — the installers are uploaded as a workflow artifact instead
@@ -139,6 +166,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         with:
           projectPath: apps/desktop
+          args: --config src-tauri/tauri.sidecar.conf.json
 
       - name: Upload build artifacts (manual test run)
         if: "!startsWith(github.ref, 'refs/tags/')"
