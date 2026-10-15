@@ -72,8 +72,22 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      # oikb-main/ is not committed to this repo, so fetch upstream oikb for
+      # the build. Pin OIKB_REF to a tag/commit once you know which version
+      # you tested against, so releases are reproducible.
+      - name: Fetch oikb source
+        shell: bash
+        env:
+          OIKB_REF: main
+        run: |
+          [ -d oikb-main ] || git clone --depth 1 --branch "$OIKB_REF" https://github.com/open-webui/oikb.git oikb-main
+
       - name: Build oikb sidecar
         shell: bash
+        env:
+          # uv would otherwise pick the newest interpreter (3.15 pre-release
+          # on current runners), which PyInstaller and oikb's deps don't support.
+          UV_PYTHON: "3.12"
         run: |
           cd packaging/oikb-sidecar
           if [ "$RUNNER_OS" = "Windows" ]; then
