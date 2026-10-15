@@ -16,7 +16,7 @@ Each job builds independently (`fail-fast: false`, so one platform failing doesn
 
 **Builds are unsigned.** No code-signing certificates or secrets are required to get this working, but that means:
 - **Windows**: SmartScreen will show an "unrecognized app" warning on first run (users click "More info" → "Run anyway").
-- **macOS**: Gatekeeper will refuse to open it normally; users right-click the app → **Open** once to bypass it (or run `xattr -cr /Applications/Open DesktopUI.app`).
+- **macOS**: Gatekeeper will refuse to open it normally; users right-click the app → **Open** once to bypass it. If macOS says the app is "damaged and can't be opened" (quarantine flag on an unnotarized download, not a corrupt file), move it to /Applications and run `xattr -cr "/Applications/Open DesktopUI.app"`. The build is ad-hoc signed (`bundle.macOS.signingIdentity: "-"` in `tauri.conf.json`) so Apple Silicon accepts the binary; real Developer ID signing replaces this once the Apple secrets are set.
 - **Linux**: no equivalent warning.
 
 Setting up real code signing later (a paid Windows/Apple Developer certificate) is a separate, optional step — see [Adding code signing later](#adding-code-signing-later).

@@ -123,7 +123,7 @@ jobs:
             Your OS will warn you on first launch — that's expected, not a sign of a bad download. It's fine to run anyway:
 
             - **Windows**: click "More info", then "Run anyway" on the SmartScreen prompt.
-            - **macOS**: right-click the app → **Open** (or run `xattr -cr /Applications/Open DesktopUI.app` in Terminal).
+            - **macOS**: if you see "app is damaged and can't be opened", run `xattr -cr "/Applications/Open DesktopUI.app"` in Terminal (move the app to /Applications first). Otherwise right-click the app → **Open**.
             - **Linux**: no equivalent warning — nothing extra to do.
 
             You only need to do this once per install.
