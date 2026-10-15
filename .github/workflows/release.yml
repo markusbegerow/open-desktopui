@@ -80,7 +80,7 @@ jobs:
             powershell -NoProfile -ExecutionPolicy Bypass -File ./build.ps1
             EXT=".exe"
           else
-            ./build.sh
+            bash ./build.sh
             EXT=""
           fi
           TRIPLE=$(rustc -Vv | sed -n 's/^host: //p')
