@@ -3526,7 +3526,7 @@ dependencies = [
 
 [[package]]
 name = "opendesktopui"
-version = "1.0.2"
+version = "0.1.2"
 dependencies = [
  "futures-util",
  "log",
