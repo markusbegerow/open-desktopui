@@ -140,8 +140,6 @@ jobs:
             core.setFailed(
               `Keine erfolgreiche CI innerhalb von 30 Minuten für ${sha}`
             );
-
-jobs:
   release:
     needs: preflight
     permissions:
