@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # B: Versionsnummern mit dem Git-Tag vergleichen
       - name: Verify version numbers
@@ -89,7 +89,7 @@ jobs:
       # C: Erfolgreiche CI für exakt denselben Commit
       - name: Verify successful CI
         if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const sha = context.sha;
@@ -154,7 +154,7 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Tauri v2's documented Ubuntu build dependencies — Windows/macOS
       # runners already have everything they need preinstalled.
@@ -183,7 +183,7 @@ jobs:
           workingDirectories: apps/desktop/src-tauri
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -200,7 +200,7 @@ jobs:
       # only for these CI builds (--config below), so plain `tauri dev` /
       # `cargo check` don't need the binary to exist.
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       # oikb-main/ is not committed to this repo, so fetch upstream oikb for
       # the build. Pin OIKB_REF to a tag/commit once you know which version
@@ -314,7 +314,7 @@ jobs:
 
       - name: Upload build artifacts (manual test run)
         if: "!startsWith(github.ref, 'refs/tags/')"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: opendesktopui-${{ matrix.platform }}
           path: apps/desktop/src-tauri/target/release/bundle/**
