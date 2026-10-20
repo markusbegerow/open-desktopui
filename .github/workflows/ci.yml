@@ -10,6 +10,18 @@ on:
   pull_request:
 
 jobs:
+  workflow-lint:
+    name: Validate GitHub Actions workflows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
   ci:
     runs-on: ubuntu-latest
     steps:
