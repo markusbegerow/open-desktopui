@@ -130,6 +130,20 @@ pub fn run() {
                             ",
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 9,
+                            description: "turn groups into Open WebUI-style folders (nesting, icon, system prompt, sync id)",
+                            sql: "
+                                ALTER TABLE groups ADD COLUMN parent_id TEXT;
+                                ALTER TABLE groups ADD COLUMN icon TEXT;
+                                ALTER TABLE groups ADD COLUMN system_prompt TEXT;
+                                ALTER TABLE groups ADD COLUMN is_expanded INTEGER NOT NULL DEFAULT 1;
+                                ALTER TABLE groups ADD COLUMN openwebui_folder_id TEXT;
+                                ALTER TABLE groups ADD COLUMN updated_at INTEGER;
+                                ALTER TABLE groups ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0;
+                            ",
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),
@@ -229,14 +243,23 @@ pub fn run() {
             commands::list_knowledge_bases,
             commands::openwebui_login,
             commands::get_openwebui_current_user,
+            commands::fetch_openwebui_profile_image,
             commands::trigger_sync,
             commands::restart_daemon,
             commands::clear_sync_history,
             commands::transcribe_audio,
             commands::upload_openwebui_file,
             commands::create_openwebui_chat,
+            commands::list_openwebui_folders,
+            commands::create_openwebui_folder,
+            commands::update_openwebui_folder,
+            commands::update_openwebui_folder_parent,
+            commands::update_openwebui_folder_expanded,
+            commands::delete_openwebui_folder,
+            commands::move_openwebui_chat_to_folder,
             commands::rate_openwebui_message,
             commands::save_text_file,
+            commands::pick_avatar_image,
             commands::set_keep_running_in_tray,
             commands::frontend_log,
             commands::reset_chat_db,

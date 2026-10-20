@@ -19,6 +19,7 @@ import { consumeVaultResetNotice } from "../lib/secureStore";
 import { getCurrentUser, listModels, OpenWebUiModel } from "../lib/openWebUiClient";
 import { Language, resolveLanguage, useTranslation } from "../lib/i18n";
 import { logError } from "../lib/log";
+import { avatarInitial, cropToSquareDataUrl } from "../lib/avatar";
 import AboutTab from "./AboutTab";
 import KbSyncView from "./KbSyncView";
 
@@ -31,9 +32,17 @@ export interface SettingsViewProps {
   onTabChange: (tab: SettingsTab) => void;
   language: Language;
   onLanguageChange: (lang: Language) => void;
+  // Called after the avatar or username visibility changes so the sidebar reloads.
+  onProfileChanged?: () => void;
 }
 
-export default function SettingsView({ activeTab, onTabChange, language, onLanguageChange }: SettingsViewProps) {
+export default function SettingsView({
+  activeTab,
+  onTabChange,
+  language,
+  onLanguageChange,
+  onProfileChanged,
+}: SettingsViewProps) {
   const { t } = useTranslation();
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -65,6 +74,10 @@ export default function SettingsView({ activeTab, onTabChange, language, onLangu
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [systemError, setSystemError] = useState<string | null>(null);
   const [keepRunningInTray, setKeepRunningInTray] = useState(true);
+  const [avatar, setAvatar] = useState<string | undefined>(undefined);
+  const [serverAvatar, setServerAvatar] = useState<string | undefined>(undefined);
+  const [hideUsername, setHideUsername] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
 
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const tabs = TAB_IDS.map((id) => ({ id, label: t(`settings.tabs.${id}`) }));
@@ -92,6 +105,9 @@ export default function SettingsView({ activeTab, onTabChange, language, onLangu
         setDefaultModelId(prefs?.defaultModelId ?? "");
         setLanguagePref(prefs?.language ?? "auto");
         setKeepRunningInTray(prefs?.keepRunningInTray ?? true);
+        setAvatar(prefs?.avatar);
+        setServerAvatar(prefs?.serverAvatar);
+        setHideUsername(prefs?.hideUsername ?? false);
       } catch (err) {
         setLoadError(err instanceof Error ? err.message : String(err));
       }
@@ -122,6 +138,42 @@ export default function SettingsView({ activeTab, onTabChange, language, onLangu
       setTimeout(() => setSaved(false), 1500);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleChooseAvatar() {
+    setAvatarError(null);
+    try {
+      const raw = await invoke<ArrayBuffer>("pick_avatar_image");
+      if (raw.byteLength === 0) return; // dialog cancelled
+      const next = await cropToSquareDataUrl(new Uint8Array(raw));
+      await setAppPrefs({ avatar: next });
+      setAvatar(next);
+      onProfileChanged?.();
+    } catch (err) {
+      setAvatarError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleRemoveAvatar() {
+    setAvatarError(null);
+    try {
+      await setAppPrefs({ avatar: undefined });
+      setAvatar(undefined);
+      onProfileChanged?.();
+    } catch (err) {
+      setAvatarError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleHideUsernameChange(next: boolean) {
+    setAvatarError(null);
+    setHideUsername(next);
+    try {
+      await setAppPrefs({ hideUsername: next });
+      onProfileChanged?.();
+    } catch (err) {
+      setAvatarError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -515,6 +567,42 @@ export default function SettingsView({ activeTab, onTabChange, language, onLangu
                 )}
                 {saved && <span className="status-ok">{t("common.saved")}</span>}
                 {saveError && <span className="status-error">Save failed: {saveError}</span>}
+              </fieldset>
+
+              <fieldset>
+                <legend>{t("settings.avatar")}</legend>
+                <div className="avatar-setting">
+                  {avatar || serverAvatar ? (
+                    <img className="avatar-preview" src={avatar ?? serverAvatar} alt="" />
+                  ) : (
+                    <span className="avatar-preview">{avatarInitial(displayName)}</span>
+                  )}
+                  <div className="avatar-actions">
+                    <button type="button" onClick={handleChooseAvatar}>
+                      {t("settings.avatarChoose")}
+                    </button>
+                    {avatar && (
+                      <button type="button" onClick={handleRemoveAvatar}>
+                        {t("settings.avatarRemove")}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <span className="hint">{t("settings.avatarHint")}</span>
+                {!avatar && serverAvatar && <span className="hint">{t("settings.avatarFromServer")}</span>}
+                <label className="row">
+                  <input
+                    type="checkbox"
+                    checked={hideUsername}
+                    onChange={(e) => handleHideUsernameChange(e.target.checked)}
+                  />
+                  {t("settings.hideUsername")}
+                </label>
+                {avatarError && (
+                  <span className="status-error">
+                    {t("settings.avatarError")}: {avatarError}
+                  </span>
+                )}
               </fieldset>
 
               <fieldset>

@@ -8,11 +8,13 @@ import SplashScreen from "./components/SplashScreen";
 import SettingsView, { SettingsTab } from "./components/SettingsView";
 import Sidebar, { View } from "./components/Sidebar";
 import { getCurrentUser } from "./lib/openWebUiClient";
+import { syncServerAvatar } from "./lib/serverAvatar";
+import { pullFolders } from "./lib/folderSync";
 import { getAppPrefs, getOpenWebUiConfig, setAppPrefs } from "./lib/settingsStore";
 import { consumeVaultResetNotice } from "./lib/secureStore";
 import { applyChatTextSize, applyTheme } from "./lib/theme";
 import { classifyAttachment, isRejected, PendingAttachment } from "./lib/attachments";
-import { I18nProvider, Language, resolveLanguage } from "./lib/i18n";
+import { I18nProvider, Language, resolveLanguage, useTranslation } from "./lib/i18n";
 import "highlight.js/styles/github-dark-dimmed.css";
 import "./App.css";
 
@@ -35,6 +37,8 @@ function App() {
   viewRef.current = view;
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
+  // Folder a "new chat here" was started from; the chat created next is filed in it.
+  const [newChatFolder, setNewChatFolder] = useState<{ id: string; name: string } | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [signedIn, setSignedIn] = useState(false);
   const [language, setLanguage] = useState<Language>("en");
@@ -60,6 +64,13 @@ function App() {
             const user = await getCurrentUser(config.baseUrl, config.apiKey);
             if (user.name) await setAppPrefs({ displayName: user.name });
             detectedLanguage = user.detectedLanguage;
+            // Not awaited: the sidebar picks the image up when it lands.
+            syncServerAvatar(config.baseUrl, config.apiKey, user).then((changed) => {
+              if (changed) setSidebarRefreshKey((k) => k + 1);
+            });
+            pullFolders().then((changed) => {
+              if (changed) setSidebarRefreshKey((k) => k + 1);
+            });
           } catch {
             // Non-fatal — keeps whatever displayName was already stored.
           }
@@ -128,6 +139,14 @@ function App() {
   function handleNewChat() {
     setConversationId(null);
     setAttachments([]);
+    setNewChatFolder(null);
+    setView("home");
+  }
+
+  function handleNewChatInFolder(folder: { id: string; name: string }) {
+    setConversationId(null);
+    setAttachments([]);
+    setNewChatFolder(folder);
     setView("home");
   }
 
@@ -153,6 +172,7 @@ function App() {
 
   function handleConversationCreated(id: string) {
     setConversationId(id);
+    setNewChatFolder(null);
     setSidebarRefreshKey((k) => k + 1);
   }
 
@@ -176,6 +196,7 @@ function App() {
         view={view}
         activeConversationId={conversationId}
         onNewChat={handleNewChat}
+        onNewChatInFolder={handleNewChatInFolder}
         onSelectConversation={handleSelectConversation}
         onSelectView={setView}
         refreshKey={sidebarRefreshKey}
@@ -189,6 +210,7 @@ function App() {
             </button>
           </p>
         )}
+        {view === "home" && newChatFolder && <FolderChatHint name={newChatFolder.name} />}
         {view === "home" && (
           <HomeView
             onSend={handleStartChatFromHome}
@@ -205,6 +227,7 @@ function App() {
             initialMessage={pendingInitialMessage}
             onInitialMessageConsumed={() => setPendingInitialMessage(null)}
             initialModel={pendingInitialModel}
+            initialGroupId={newChatFolder?.id ?? null}
             initialKnowledgeIds={pendingInitialKnowledgeIds}
             initialAttachments={pendingInitialAttachments}
             onInitialAttachmentsConsumed={() => setPendingInitialAttachments([])}
@@ -221,11 +244,21 @@ function App() {
             onTabChange={setSettingsTab}
             language={language}
             onLanguageChange={setLanguage}
+            onProfileChanged={() => setSidebarRefreshKey((k) => k + 1)}
           />
         )}
       </main>
     </div>
     </I18nProvider>
+  );
+}
+
+function FolderChatHint({ name }: { name: string }) {
+  const { t } = useTranslation();
+  return (
+    <p className="hint folder-chat-hint">
+      {t("folders.newChatIn")}: <strong>{name}</strong>
+    </p>
   );
 }
 

@@ -7,20 +7,30 @@ import ConversationMenu from "./ConversationMenu";
 import {
   Conversation,
   Group,
-  createGroup,
   deleteConversation,
   getMessages,
   listConversations,
   listGroups,
   renameConversation,
   setConversationArchived,
-  setConversationGroup,
   setConversationPinned,
   setConversationUnread,
 } from "../lib/chatHistory";
 import { getAppPrefs, setAppPrefs } from "../lib/settingsStore";
 import { ensureSharedChat } from "../lib/openWebUiSync";
 import { useTranslation } from "../lib/i18n";
+import { avatarInitial, resolveAvatar } from "../lib/avatar";
+import { FolderNode, buildFolderTree } from "../lib/folders";
+import {
+  SyncOutcome,
+  createFolder,
+  deleteFolder,
+  moveConversationToFolder,
+  setFolderExpanded,
+  updateFolderDetails,
+} from "../lib/folderSync";
+import FolderDialog from "./FolderDialog";
+import FolderMenu from "./FolderMenu";
 
 export type View = "home" | "chat" | "settings";
 
@@ -28,6 +38,7 @@ export interface SidebarProps {
   view: View;
   activeConversationId: string | null;
   onNewChat: () => void;
+  onNewChatInFolder: (folder: { id: string; name: string }) => void;
   onSelectConversation: (id: string) => void;
   onSelectView: (view: View) => void;
   refreshKey: number;
@@ -37,6 +48,7 @@ export default function Sidebar({
   view,
   activeConversationId,
   onNewChat,
+  onNewChatInFolder,
   onSelectConversation,
   onSelectView,
   refreshKey,
@@ -45,6 +57,8 @@ export default function Sidebar({
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [displayName, setDisplayName] = useState<string | undefined>(undefined);
+  const [avatar, setAvatar] = useState<string | undefined>(undefined);
+  const [hideUsername, setHideUsername] = useState(false);
   const [search, setSearch] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -52,6 +66,10 @@ export default function Sidebar({
   const [collapsed, setCollapsed] = useState(false);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
+  const [folderDialog, setFolderDialog] = useState<
+    { mode: "create"; parentId: string | null } | { mode: "edit"; group: Group } | null
+  >(null);
+  const [pendingDeleteFolder, setPendingDeleteFolder] = useState<Group | null>(null);
 
   function refresh() {
     listConversations().then(setConversations);
@@ -64,7 +82,11 @@ export default function Sidebar({
   }, [refreshKey]);
 
   useEffect(() => {
-    getAppPrefs().then((prefs) => setDisplayName(prefs?.displayName));
+    getAppPrefs().then((prefs) => {
+      setDisplayName(prefs?.displayName);
+      setAvatar(resolveAvatar(prefs));
+      setHideUsername(prefs?.hideUsername ?? false);
+    });
   }, [refreshKey]);
 
   useEffect(() => {
@@ -84,10 +106,12 @@ export default function Sidebar({
   const pinned = filtered.filter((c) => c.pinned && !c.archived);
   const archived = filtered.filter((c) => c.archived);
   const ungrouped = filtered.filter((c) => !c.pinned && !c.archived && !c.group_id);
-  const byGroup = groups.map((g) => ({
-    group: g,
-    items: filtered.filter((c) => !c.pinned && !c.archived && c.group_id === g.id),
-  }));
+  const folderTree = buildFolderTree(groups);
+  const searching = search.trim() !== "";
+  const folderItems = (id: string) => filtered.filter((c) => !c.pinned && !c.archived && c.group_id === id);
+  // While searching, hide folders (and their parents) that contain no match.
+  const folderHasMatch = (node: FolderNode): boolean =>
+    folderItems(node.group.id).length > 0 || node.children.some(folderHasMatch);
 
   function handleOpenInWindow(c: Conversation) {
     new WebviewWindow(`chat-${Date.now()}`, {
@@ -119,15 +143,57 @@ export default function Sidebar({
     refresh();
   }
 
+  function reportSync(outcome: SyncOutcome) {
+    if (outcome.synced) return;
+    setShareStatus(`${t("folders.syncFailed")}${outcome.error ? `: ${outcome.error}` : ""}`);
+    setTimeout(() => setShareStatus(null), 5000);
+  }
+
   async function handleMoveToGroup(c: Conversation, groupId: string | null) {
-    await setConversationGroup(c.id, groupId);
+    reportSync(await moveConversationToFolder(c, groupId));
     refresh();
   }
 
   async function handleCreateGroupAndMove(c: Conversation, name: string) {
-    const group = await createGroup(name);
-    await setConversationGroup(c.id, group.id);
+    const { group, outcome } = await createFolder(name, null);
+    reportSync(outcome);
+    reportSync(await moveConversationToFolder(c, group.id));
     refresh();
+  }
+
+  async function handleSaveFolder(name: string, systemPrompt: string) {
+    const dialog = folderDialog;
+    setFolderDialog(null);
+    if (!dialog) return;
+    if (dialog.mode === "create") {
+      const { group, outcome } = await createFolder(name, dialog.parentId);
+      reportSync(outcome);
+      if (systemPrompt) reportSync(await updateFolderDetails(group.id, { name, icon: null, systemPrompt }));
+      if (dialog.parentId) await setFolderExpanded(dialog.parentId, true);
+    } else {
+      reportSync(
+        await updateFolderDetails(dialog.group.id, {
+          name,
+          icon: dialog.group.icon,
+          systemPrompt: systemPrompt || null,
+        }),
+      );
+    }
+    refresh();
+  }
+
+  async function confirmDeleteFolder() {
+    const group = pendingDeleteFolder;
+    setPendingDeleteFolder(null);
+    if (!group) return;
+    reportSync(await deleteFolder(group.id));
+    refresh();
+  }
+
+  async function handleToggleFolder(group: Group) {
+    // Optimistic: flip locally first so the tree responds immediately.
+    setGroups((prev) => prev.map((g) => (g.id === group.id ? { ...g, is_expanded: group.is_expanded ? 0 : 1 } : g)));
+    reportSync(await setFolderExpanded(group.id, !group.is_expanded));
   }
 
   async function handleToggleArchive(c: Conversation) {
@@ -254,6 +320,41 @@ export default function Sidebar({
     );
   }
 
+  function renderFolder(node: FolderNode) {
+    const { group } = node;
+    if (searching && !folderHasMatch(node)) return null;
+    const expanded = searching || !!group.is_expanded;
+    const items = folderItems(group.id);
+    return (
+      <div key={group.id} className="folder" style={{ marginLeft: node.depth * 12 }}>
+        <div className="folder-row">
+          <button
+            type="button"
+            className="folder-toggle"
+            onClick={() => handleToggleFolder(group)}
+            aria-expanded={expanded}
+            title={group.system_prompt ? `${group.name} — ${t("folders.systemPrompt")}` : group.name}
+          >
+            <span className="folder-chevron">{expanded ? "▾" : "▸"}</span>
+            <span className="folder-name">{group.name}</span>
+          </button>
+          <FolderMenu
+            onNewChat={() => onNewChatInFolder({ id: group.id, name: group.name })}
+            onNewSubfolder={() => setFolderDialog({ mode: "create", parentId: group.id })}
+            onEdit={() => setFolderDialog({ mode: "edit", group })}
+            onDelete={() => setPendingDeleteFolder(group)}
+          />
+        </div>
+        {expanded && (
+          <>
+            {node.children.map(renderFolder)}
+            {items.length > 0 && <div className="conversation-list">{items.map(renderConversation)}</div>}
+          </>
+        )}
+      </div>
+    );
+  }
+
   return (
     <nav className={`sidebar${collapsed ? " collapsed" : ""}`}>
       <button
@@ -295,14 +396,18 @@ export default function Sidebar({
           </>
         )}
 
-        {byGroup.map(({ group, items }) =>
-          items.length > 0 ? (
-            <div key={group.id}>
-              <div className="sidebar-section-label">{group.name}</div>
-              <div className="conversation-list">{items.map(renderConversation)}</div>
-            </div>
-          ) : null,
-        )}
+        <div className="sidebar-section-label folder-section-label">
+          <span>{t("folders.title")}</span>
+          <button
+            type="button"
+            className="folder-add"
+            title={t("folders.newFolder")}
+            onClick={() => setFolderDialog({ mode: "create", parentId: null })}
+          >
+            +
+          </button>
+        </div>
+        {folderTree.map(renderFolder)}
 
         {ungrouped.length > 0 && (
           <>
@@ -321,10 +426,40 @@ export default function Sidebar({
         )}
       </div>
 
-      <button className="sidebar-account" onClick={() => onSelectView("settings")} type="button">
-        <span className="sidebar-account-avatar">{(displayName || "?")[0]?.toUpperCase()}</span>
-        <span className="sidebar-account-name">{displayName || t("sidebar.account")}</span>
+      <button
+        className="sidebar-account"
+        onClick={() => onSelectView("settings")}
+        title={displayName || t("sidebar.account")}
+        type="button"
+      >
+        {avatar ? (
+          <img className="sidebar-account-avatar" src={avatar} alt="" />
+        ) : (
+          <span className="sidebar-account-avatar">{avatarInitial(displayName)}</span>
+        )}
+        {!hideUsername && <span className="sidebar-account-name">{displayName || t("sidebar.account")}</span>}
       </button>
+
+      {folderDialog && (
+        <FolderDialog
+          mode={folderDialog.mode}
+          initialName={folderDialog.mode === "edit" ? folderDialog.group.name : ""}
+          initialSystemPrompt={folderDialog.mode === "edit" ? (folderDialog.group.system_prompt ?? "") : ""}
+          onSave={handleSaveFolder}
+          onCancel={() => setFolderDialog(null)}
+        />
+      )}
+
+      {pendingDeleteFolder && (
+        <ConfirmDialog
+          title={t("folders.delete")}
+          message={`"${pendingDeleteFolder.name}": ${t("folders.deleteMessage")}`}
+          confirmLabel={t("common.delete")}
+          danger
+          onConfirm={confirmDeleteFolder}
+          onCancel={() => setPendingDeleteFolder(null)}
+        />
+      )}
 
       {pendingDelete && (
         <ConfirmDialog

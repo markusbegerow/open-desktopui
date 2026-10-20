@@ -84,3 +84,42 @@ jobs:
         working-directory: apps/desktop/src-tauri
         run: cargo audit
         continue-on-error: true
+
+  # macOS uses WKWebView and has no Linux-style system packages to install;
+  # this just catches type/test/compile regressions there before a release
+  # build does. The audits already ran in the `ci` job above.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Typecheck frontend
+        working-directory: apps/desktop
+        run: npx tsc --noEmit
+
+      - name: Run frontend tests
+        working-directory: apps/desktop
+        run: npm run test
+
+      - name: cargo check
+        working-directory: apps/desktop/src-tauri
+        run: cargo check

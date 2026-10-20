@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { followScrollTop, isUserScroll } from "../lib/scroll";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -14,6 +15,9 @@ export interface DisplayMessage extends ChatMessage {
 
 export interface ChatThreadProps {
   messages: DisplayMessage[];
+  // Used to tell "a conversation was loaded" (scroll to the end) apart from
+  // messages being added to the current one.
+  conversationId?: string | null;
   onEditMessage: (id: string, text: string) => void;
   onRegenerate: (id: string) => void;
   onVote: (id: string, rating: number) => void;
@@ -117,11 +121,70 @@ function toSpeechText(markdown: string): string {
     .trim();
 }
 
-export default function ChatThread({ messages, onEditMessage, onRegenerate, onVote }: ChatThreadProps) {
+export default function ChatThread({
+  messages,
+  conversationId,
+  onEditMessage,
+  onRegenerate,
+  onVote,
+}: ChatThreadProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  // Whether streaming replies should keep scrolling into view. Turned off as
+  // soon as the user scrolls themselves, back on for the next reply.
+  const followRef = useRef(true);
+  const lastSetTopRef = useRef(0);
+  const followedReplyIdRef = useRef<string | null>(null);
+  const loadedConversationRef = useRef<string | null | undefined>(undefined);
+
+  function setThreadScrollTop(thread: HTMLDivElement, top: number) {
+    lastSetTopRef.current = top;
+    thread.scrollTop = top;
+    // The browser clamps; remember where it actually ended up.
+    lastSetTopRef.current = thread.scrollTop;
+  }
+
+  function handleThreadScroll() {
+    const thread = threadRef.current;
+    if (thread && isUserScroll(thread.scrollTop, lastSetTopRef.current)) followRef.current = false;
+  }
+
+  useLayoutEffect(() => {
+    const thread = threadRef.current;
+    if (!thread) return;
+    const last = messages[messages.length - 1];
+
+    // A different conversation was loaded: start at the latest message.
+    if (conversationId !== loadedConversationRef.current && !last?.streaming) {
+      loadedConversationRef.current = conversationId;
+      if (messages.length > 0) setThreadScrollTop(thread, thread.scrollHeight);
+      return;
+    }
+    loadedConversationRef.current = conversationId;
+
+    if (!last || last.role !== "assistant" || !last.streaming) return;
+    if (followedReplyIdRef.current !== last.id) {
+      followedReplyIdRef.current = last.id;
+      followRef.current = true;
+    }
+    if (!followRef.current) return;
+
+    const reply = Array.from(thread.querySelectorAll<HTMLElement>("[data-message-id]")).find(
+      (el) => el.dataset.messageId === last.id,
+    );
+    if (!reply) return;
+    const replyTop = reply.getBoundingClientRect().top - thread.getBoundingClientRect().top + thread.scrollTop;
+    const target = followScrollTop({
+      scrollHeight: thread.scrollHeight,
+      clientHeight: thread.clientHeight,
+      replyTop,
+    });
+    // Only ever scroll down while following, so we never pull the view back up.
+    if (target > thread.scrollTop) setThreadScrollTop(thread, target);
+  }, [messages]);
 
   async function handleCopy(m: DisplayMessage) {
     try {
@@ -164,11 +227,11 @@ export default function ChatThread({ messages, onEditMessage, onRegenerate, onVo
   }
 
   return (
-    <div className="chat-thread">
+    <div className="chat-thread" ref={threadRef} onScroll={handleThreadScroll}>
       <div className="chat-thread-inner">
         {messages.length === 0 && <p className="hint">Send a message to start the conversation.</p>}
         {messages.map((m) => (
-          <div key={m.id} className={`chat-message chat-message-${m.role}`}>
+          <div key={m.id} data-message-id={m.id} className={`chat-message chat-message-${m.role}`}>
             <div className="chat-message-role">{m.role === "user" ? "You" : "Assistant"}</div>
             {m.attachments && m.attachments.length > 0 && (
               <div className="attachment-chip-row">

@@ -63,11 +63,22 @@ export interface Conversation {
   openwebui_chat_id: string | null;
 }
 
+// A folder in the sidebar. Mirrors Open WebUI's folder model (nesting, icon,
+// system prompt, expanded state); `openwebui_folder_id` links it to the
+// server's copy once synced. The table keeps its original name `groups`.
 export interface Group {
   id: string;
   name: string;
   account_id: string | null;
   created_at: number;
+  parent_id: string | null;
+  icon: string | null;
+  system_prompt: string | null;
+  is_expanded: number; // 0/1
+  openwebui_folder_id: string | null;
+  updated_at: number | null;
+  // 1 while a local change hasn't reached the server yet (retried on the next sync)
+  dirty: number;
 }
 
 export interface StoredMessage {
@@ -96,6 +107,7 @@ export async function createConversation(
   model: string,
   title: string,
   knowledgeIds: string[] = [],
+  groupId: string | null = null,
 ): Promise<Conversation> {
   const db = await getDb();
   const conversation: Conversation = {
@@ -108,11 +120,11 @@ export async function createConversation(
     pinned: 0,
     unread: 0,
     archived: 0,
-    group_id: null,
+    group_id: groupId,
     openwebui_chat_id: null,
   };
   await db.execute(
-    "INSERT INTO conversations (id, title, model, created_at, knowledge_ids, account_id) VALUES ($1, $2, $3, $4, $5, $6)",
+    "INSERT INTO conversations (id, title, model, created_at, knowledge_ids, account_id, group_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
     [
       conversation.id,
       conversation.title,
@@ -120,6 +132,7 @@ export async function createConversation(
       conversation.created_at,
       conversation.knowledge_ids,
       conversation.account_id,
+      conversation.group_id,
     ],
   );
   return conversation;
@@ -176,30 +189,146 @@ export async function listGroups(): Promise<Group[]> {
   );
 }
 
-export async function createGroup(name: string): Promise<Group> {
+export async function getGroup(id: string): Promise<Group | null> {
   const db = await getDb();
+  const rows = await db.select<Group[]>("SELECT * FROM groups WHERE id = $1", [id]);
+  return rows[0] ?? null;
+}
+
+export interface NewGroupFields {
+  parent_id?: string | null;
+  icon?: string | null;
+  system_prompt?: string | null;
+  is_expanded?: boolean;
+  openwebui_folder_id?: string | null;
+}
+
+export async function createGroup(
+  name: string,
+  parentId: string | null = null,
+  fields: NewGroupFields = {},
+): Promise<Group> {
+  const db = await getDb();
+  const now = Date.now();
   const group: Group = {
     id: newId(),
     name,
     account_id: await currentAccountId(),
-    created_at: Date.now(),
+    created_at: now,
+    parent_id: fields.parent_id ?? parentId,
+    icon: fields.icon ?? null,
+    system_prompt: fields.system_prompt ?? null,
+    is_expanded: fields.is_expanded === false ? 0 : 1,
+    openwebui_folder_id: fields.openwebui_folder_id ?? null,
+    updated_at: now,
+    dirty: 0,
   };
   await db.execute(
-    "INSERT INTO groups (id, name, account_id, created_at) VALUES ($1, $2, $3, $4)",
-    [group.id, group.name, group.account_id, group.created_at],
+    `INSERT INTO groups (id, name, account_id, created_at, parent_id, icon, system_prompt, is_expanded, openwebui_folder_id, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      group.id,
+      group.name,
+      group.account_id,
+      group.created_at,
+      group.parent_id,
+      group.icon,
+      group.system_prompt,
+      group.is_expanded,
+      group.openwebui_folder_id,
+      group.updated_at,
+    ],
   );
   return group;
 }
 
 export async function renameGroup(id: string, name: string): Promise<void> {
   const db = await getDb();
-  await db.execute("UPDATE groups SET name = $1 WHERE id = $2", [name, id]);
+  await db.execute("UPDATE groups SET name = $1, updated_at = $2 WHERE id = $3", [name, Date.now(), id]);
 }
 
+export async function setGroupIcon(id: string, icon: string | null): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE groups SET icon = $1, updated_at = $2 WHERE id = $3", [icon, Date.now(), id]);
+}
+
+export async function setGroupSystemPrompt(id: string, systemPrompt: string | null): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE groups SET system_prompt = $1, updated_at = $2 WHERE id = $3", [
+    systemPrompt,
+    Date.now(),
+    id,
+  ]);
+}
+
+export async function setGroupExpanded(id: string, expanded: boolean): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE groups SET is_expanded = $1 WHERE id = $2", [expanded ? 1 : 0, id]);
+}
+
+export async function setGroupParent(id: string, parentId: string | null): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE groups SET parent_id = $1, updated_at = $2 WHERE id = $3", [
+    parentId,
+    Date.now(),
+    id,
+  ]);
+}
+
+export async function setGroupDirty(id: string, dirty: boolean): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE groups SET dirty = $1 WHERE id = $2", [dirty ? 1 : 0, id]);
+}
+
+// Overwrites a folder's synced fields with the server's values (used by the
+// pull in folderSync.ts); does not touch `dirty`.
+export async function applyServerGroupFields(
+  id: string,
+  fields: {
+    name: string;
+    parent_id: string | null;
+    icon: string | null;
+    system_prompt?: string | null; // undefined = keep the local prompt
+    is_expanded: boolean;
+  },
+): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    "UPDATE groups SET name = $1, parent_id = $2, icon = $3, is_expanded = $4 WHERE id = $5",
+    [fields.name, fields.parent_id, fields.icon, fields.is_expanded ? 1 : 0, id],
+  );
+  if (fields.system_prompt !== undefined) {
+    await db.execute("UPDATE groups SET system_prompt = $1 WHERE id = $2", [fields.system_prompt, id]);
+  }
+}
+
+export async function setGroupOpenWebUiFolderId(id: string, folderId: string | null): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE groups SET openwebui_folder_id = $1 WHERE id = $2", [folderId, id]);
+}
+
+// Deleting a folder keeps its contents (matching Open WebUI's default):
+// subfolders move up one level and chats become unfiled.
 export async function deleteGroup(id: string): Promise<void> {
   const db = await getDb();
+  const rows = await db.select<{ parent_id: string | null }[]>("SELECT parent_id FROM groups WHERE id = $1", [id]);
+  const parentId = rows[0]?.parent_id ?? null;
+  await db.execute("UPDATE groups SET parent_id = $1 WHERE parent_id = $2", [parentId, id]);
   await db.execute("UPDATE conversations SET group_id = NULL WHERE group_id = $1", [id]);
   await db.execute("DELETE FROM groups WHERE id = $1", [id]);
+}
+
+// The system prompt of the folder a conversation is filed in, if it has one.
+// A lookup failure just means "no prompt" — it must never block sending.
+export async function folderSystemPrompt(conversationId: string): Promise<string | null> {
+  try {
+    const conversation = await getConversation(conversationId);
+    if (!conversation?.group_id) return null;
+    const text = (await getGroup(conversation.group_id))?.system_prompt?.trim();
+    return text || null;
+  } catch {
+    return null;
+  }
 }
 
 export function parseKnowledgeIds(conversation: Pick<Conversation, "knowledge_ids">): string[] {

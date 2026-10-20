@@ -1,6 +1,6 @@
 [package]
 name = "opendesktopui"
-version = "0.1.2"
+version = "0.1.3"
 description = "A native desktop chat client for Open WebUI, with oikb Knowledge Base sync built in"
 authors = ["Markus Begerow <mail@markus-begerow.de>"]
 edition = "2021"

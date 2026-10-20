@@ -7,6 +7,7 @@ import type { Conversation } from "./chatHistory";
 import { getMessages, setConversationOpenWebUiChatId, setMessageOpenWebUiId } from "./chatHistory";
 import { createOpenWebUiChat } from "./openWebUiClient";
 import { getOpenWebUiConfig } from "./settingsStore";
+import { serverFolderIdFor } from "./folderSync";
 
 export interface SharedChat {
   chatId: string;
@@ -31,6 +32,7 @@ export async function ensureSharedChat(conversation: Conversation): Promise<Shar
     conversation.title || "New conversation",
     conversation.model,
     stored.map((m) => ({ role: m.role as "user" | "assistant" | "system", content: m.content })),
+    await serverFolderIdFor(conversation.group_id),
   );
 
   await setConversationOpenWebUiChatId(conversation.id, created.id);
