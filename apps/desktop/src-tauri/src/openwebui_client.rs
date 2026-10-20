@@ -214,6 +214,7 @@ pub struct CurrentUser {
     pub id: Option<String>,
     pub name: Option<String>,
     pub detected_language: Option<String>,
+    pub profile_image_url: Option<String>,
 }
 
 /// ASSUMPTION — NOT YET VERIFIED against a live instance: Open WebUI's user
@@ -258,7 +259,308 @@ pub async fn get_current_user(base_url: String, token: String) -> Result<Current
         id: body.get("id").and_then(|n| n.as_str()).map(|n| n.to_string()),
         name: body.get("name").and_then(|n| n.as_str()).map(|n| n.to_string()),
         detected_language: extract_detected_language(&body),
+        profile_image_url: body
+            .get("profile_image_url")
+            .and_then(|n| n.as_str())
+            .map(|n| n.to_string()),
     })
+}
+
+/// A folder as Open WebUI reports it. `system_prompt` comes from the folder's
+/// `data` object, which the list endpoint omits, so it is `None` when the
+/// per-folder lookup failed (`system_prompt_known = false`) and the caller
+/// should keep whatever it already has.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerFolder {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub icon: Option<String>,
+    pub is_expanded: bool,
+    pub system_prompt: Option<String>,
+    pub system_prompt_known: bool,
+}
+
+fn parse_server_folder(body: &Value) -> Result<ServerFolder, String> {
+    let id = body
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("folder response had no `id`: {body}"))?
+        .to_string();
+    let data = body.get("data").filter(|d| d.is_object());
+    Ok(ServerFolder {
+        id,
+        name: body
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        parent_id: body
+            .get("parent_id")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string()),
+        icon: body
+            .get("meta")
+            .and_then(|m| m.get("icon"))
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string()),
+        is_expanded: body
+            .get("is_expanded")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        system_prompt: data
+            .and_then(|d| d.get("system_prompt"))
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string()),
+        system_prompt_known: body.get("data").is_some(),
+    })
+}
+
+async fn folder_request(
+    method: reqwest::Method,
+    base_url: &str,
+    path: &str,
+    token: &str,
+    body: Option<Value>,
+) -> Result<Value, String> {
+    let url = format!("{}{}", base_url.trim_end_matches('/'), path);
+    let mut req = reqwest::Client::new()
+        .request(method, &url)
+        .bearer_auth(token)
+        .timeout(std::time::Duration::from_secs(15));
+    if let Some(body) = body {
+        req = req.json(&body);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("could not reach {url}: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        log::error!("[openwebui] folder request to {url} failed: {status}");
+        return Err(format!("folder request failed ({status}): {text}"));
+    }
+    // Some routes answer with an empty body or a bare `true`.
+    let text = resp.text().await.unwrap_or_default();
+    if text.trim().is_empty() {
+        return Ok(Value::Null);
+    }
+    serde_json::from_str(&text).map_err(|e| format!("unexpected response body: {e}"))
+}
+
+/// `GET /api/v1/folders/` plus one `GET /api/v1/folders/{id}` per folder for
+/// the system prompt (shape taken from Open WebUI's `routers/folders.py`;
+/// not yet exercised against this user's server). A 403 here means the
+/// folders feature is disabled or not permitted for the account.
+pub async fn list_folders(base_url: String, token: String) -> Result<Vec<ServerFolder>, String> {
+    let list = folder_request(reqwest::Method::GET, &base_url, "/api/v1/folders/", &token, None).await?;
+    let items = list
+        .as_array()
+        .ok_or_else(|| format!("unexpected folders response: {list}"))?;
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let mut folder = parse_server_folder(item)?;
+        match folder_request(
+            reqwest::Method::GET,
+            &base_url,
+            &format!("/api/v1/folders/{}", folder.id),
+            &token,
+            None,
+        )
+        .await
+        .and_then(|detail| parse_server_folder(&detail))
+        {
+            Ok(detail) => {
+                folder.system_prompt = detail.system_prompt;
+                folder.system_prompt_known = detail.system_prompt_known;
+            }
+            Err(e) => {
+                log::warn!("[openwebui] could not load folder {}: {e}", folder.id);
+                folder.system_prompt_known = false;
+            }
+        }
+        out.push(folder);
+    }
+    Ok(out)
+}
+
+fn folder_form(name: Option<&str>, system_prompt: Option<&str>, icon: Option<&str>) -> Value {
+    let mut form = serde_json::Map::new();
+    if let Some(name) = name {
+        form.insert("name".into(), Value::String(name.to_string()));
+    }
+    if let Some(prompt) = system_prompt {
+        form.insert("data".into(), serde_json::json!({ "system_prompt": prompt }));
+    }
+    if let Some(icon) = icon {
+        form.insert("meta".into(), serde_json::json!({ "icon": icon }));
+    }
+    Value::Object(form)
+}
+
+pub async fn create_folder(
+    base_url: String,
+    token: String,
+    name: String,
+    parent_id: Option<String>,
+    system_prompt: Option<String>,
+    icon: Option<String>,
+) -> Result<ServerFolder, String> {
+    let mut body = folder_form(Some(&name), system_prompt.as_deref(), icon.as_deref());
+    if let Some(parent) = parent_id {
+        body["parent_id"] = Value::String(parent);
+    }
+    let created = folder_request(reqwest::Method::POST, &base_url, "/api/v1/folders/", &token, Some(body)).await?;
+    parse_server_folder(&created)
+}
+
+/// Updates any of name / system prompt / icon. Sending `Some("")` clears a
+/// prompt or icon (the server merges `data`/`meta` rather than replacing them).
+pub async fn update_folder(
+    base_url: String,
+    token: String,
+    id: String,
+    name: Option<String>,
+    system_prompt: Option<String>,
+    icon: Option<String>,
+) -> Result<(), String> {
+    let body = folder_form(name.as_deref(), system_prompt.as_deref(), icon.as_deref());
+    folder_request(
+        reqwest::Method::POST,
+        &base_url,
+        &format!("/api/v1/folders/{id}/update"),
+        &token,
+        Some(body),
+    )
+    .await
+    .map(|_| ())
+}
+
+pub async fn update_folder_parent(
+    base_url: String,
+    token: String,
+    id: String,
+    parent_id: Option<String>,
+) -> Result<(), String> {
+    folder_request(
+        reqwest::Method::POST,
+        &base_url,
+        &format!("/api/v1/folders/{id}/update/parent"),
+        &token,
+        Some(serde_json::json!({ "parent_id": parent_id })),
+    )
+    .await
+    .map(|_| ())
+}
+
+pub async fn update_folder_expanded(
+    base_url: String,
+    token: String,
+    id: String,
+    is_expanded: bool,
+) -> Result<(), String> {
+    folder_request(
+        reqwest::Method::POST,
+        &base_url,
+        &format!("/api/v1/folders/{id}/update/expanded"),
+        &token,
+        Some(serde_json::json!({ "is_expanded": is_expanded })),
+    )
+    .await
+    .map(|_| ())
+}
+
+/// `delete_contents=false` keeps the folder's chats (they become unfiled);
+/// the server default would delete them. Subfolders are always removed
+/// server-side, so callers re-parent them first.
+pub async fn delete_folder(base_url: String, token: String, id: String) -> Result<(), String> {
+    folder_request(
+        reqwest::Method::DELETE,
+        &base_url,
+        &format!("/api/v1/folders/{id}?delete_contents=false"),
+        &token,
+        None,
+    )
+    .await
+    .map(|_| ())
+}
+
+/// `POST /api/v1/chats/{id}/folder` with `{"folder_id": ...}` (`null` unfiles).
+pub async fn move_chat_to_folder(
+    base_url: String,
+    token: String,
+    chat_id: String,
+    folder_id: Option<String>,
+) -> Result<(), String> {
+    folder_request(
+        reqwest::Method::POST,
+        &base_url,
+        &format!("/api/v1/chats/{chat_id}/folder"),
+        &token,
+        Some(serde_json::json!({ "folder_id": folder_id })),
+    )
+    .await
+    .map(|_| ())
+}
+
+const MAX_PROFILE_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+
+/// Resolves `image_url` (possibly relative) against `base_url` and returns it
+/// only if it points at the same origin as the server, so the bearer token is
+/// never sent anywhere else.
+fn resolve_same_origin(base_url: &str, image_url: &str) -> Result<reqwest::Url, String> {
+    let base = reqwest::Url::parse(base_url.trim_end_matches('/'))
+        .map_err(|e| format!("invalid server URL: {e}"))?;
+    let resolved = base
+        .join(image_url)
+        .map_err(|e| format!("invalid image URL: {e}"))?;
+    if resolved.origin() != base.origin() {
+        return Err("profile image is hosted on a different server".into());
+    }
+    Ok(resolved)
+}
+
+/// Downloads the account's profile image from the Open WebUI server (the
+/// route may require the bearer token). Only same-origin URLs are fetched.
+pub async fn fetch_profile_image(
+    base_url: String,
+    token: String,
+    image_url: String,
+) -> Result<Vec<u8>, String> {
+    let url = resolve_same_origin(&base_url, &image_url)?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("could not build HTTP client: {e}"))?;
+    let resp = client
+        .get(url.clone())
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| format!("could not reach {url}: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("server responded with status {}", resp.status()));
+    }
+    let is_image = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("image/"));
+    if !is_image {
+        return Err("profile image response was not an image".into());
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("could not read profile image: {e}"))?;
+    if bytes.len() > MAX_PROFILE_IMAGE_BYTES {
+        return Err("profile image is too large (max 5 MB)".into());
+    }
+    Ok(bytes.to_vec())
 }
 
 /// ASSUMPTION — NOT YET VERIFIED against a live instance (unlike the routes
@@ -408,6 +710,7 @@ pub async fn create_chat(
     title: String,
     model: String,
     messages: Vec<ChatMessage>,
+    folder_id: Option<String>,
 ) -> Result<CreatedChat, String> {
     let url = format!("{}/api/v1/chats/new", base_url.trim_end_matches('/'));
 
@@ -445,7 +748,7 @@ pub async fn create_chat(
     }
     let current_id = ids.last().cloned();
 
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "chat": {
             "title": title,
             "models": [model],
@@ -456,6 +759,9 @@ pub async fn create_chat(
             },
         }
     });
+    if let Some(folder_id) = folder_id {
+        body["folder_id"] = Value::String(folder_id);
+    }
 
     let mut req = reqwest::Client::new().post(&url).json(&body);
     if let Some(key) = api_key.filter(|k| !k.is_empty()) {
@@ -841,6 +1147,71 @@ impl SseParser {
                 .map(|v| v as u32)
                 .or(self.completion_tokens);
         }
+    }
+}
+
+#[cfg(test)]
+mod folder_tests {
+    use super::*;
+
+    #[test]
+    fn parses_a_list_entry_without_data() {
+        let f = parse_server_folder(&serde_json::json!({
+            "id": "f1", "name": "Work", "parent_id": null,
+            "meta": {"icon": "briefcase"}, "is_expanded": true
+        }))
+        .unwrap();
+        assert_eq!(f.id, "f1");
+        assert_eq!(f.icon.as_deref(), Some("briefcase"));
+        assert!(f.is_expanded);
+        assert_eq!(f.system_prompt, None);
+        assert!(!f.system_prompt_known);
+    }
+
+    #[test]
+    fn parses_the_system_prompt_from_data() {
+        let f = parse_server_folder(&serde_json::json!({
+            "id": "f2", "name": "Sub", "parent_id": "f1",
+            "data": {"system_prompt": "Be brief"}
+        }))
+        .unwrap();
+        assert_eq!(f.parent_id.as_deref(), Some("f1"));
+        assert_eq!(f.system_prompt.as_deref(), Some("Be brief"));
+        assert!(f.system_prompt_known);
+    }
+
+    #[test]
+    fn rejects_a_response_without_an_id() {
+        assert!(parse_server_folder(&serde_json::json!({"name": "x"})).is_err());
+    }
+
+    #[test]
+    fn folder_form_only_includes_given_fields() {
+        let form = folder_form(Some("A"), None, Some("star"));
+        assert_eq!(form, serde_json::json!({"name": "A", "meta": {"icon": "star"}}));
+        assert_eq!(folder_form(None, Some(""), None), serde_json::json!({"data": {"system_prompt": ""}}));
+    }
+}
+
+#[cfg(test)]
+mod profile_image_tests {
+    use super::*;
+
+    #[test]
+    fn resolves_relative_paths_against_the_server() {
+        let url = resolve_same_origin("https://chat.example.com/", "/api/v1/users/1/profile/image").unwrap();
+        assert_eq!(url.as_str(), "https://chat.example.com/api/v1/users/1/profile/image");
+    }
+
+    #[test]
+    fn accepts_absolute_urls_on_the_same_origin() {
+        assert!(resolve_same_origin("http://localhost:3000", "http://localhost:3000/user.png").is_ok());
+    }
+
+    #[test]
+    fn rejects_other_origins() {
+        assert!(resolve_same_origin("https://chat.example.com", "https://evil.example.org/a.png").is_err());
+        assert!(resolve_same_origin("http://localhost:3000", "http://localhost:3001/a.png").is_err());
     }
 }
 

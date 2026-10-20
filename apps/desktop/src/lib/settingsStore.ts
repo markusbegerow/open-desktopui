@@ -77,6 +77,14 @@ export interface AppPrefs {
   // Whether closing the window (X button) hides to tray and keeps the app
   // running (today's only behavior) or actually quits it. Defaults to true.
   keepRunningInTray?: boolean;
+  // Custom profile picture as a small square data URL, stored locally only.
+  // Falls back to the display-name initial when unset.
+  avatar?: string;
+  // The account's Open WebUI profile image, same format. Used when no custom
+  // `avatar` is set; refreshed on sign-in and app start.
+  serverAvatar?: string;
+  // Show only the avatar in the sidebar profile block, not the name.
+  hideUsername?: boolean;
 }
 
 // A source the user has configured, whether or not it's currently active
@@ -134,7 +142,7 @@ export async function signOut(): Promise<void> {
   const store = await getStore();
   await store.delete(OPENWEBUI_KEY);
   const prefs = (await store.get<AppPrefs>(APP_PREFS_KEY)) ?? {};
-  const { displayName: _drop, ...rest } = prefs;
+  const { displayName: _drop, avatar: _dropAvatar, serverAvatar: _dropServerAvatar, ...rest } = prefs;
   await store.set(APP_PREFS_KEY, rest);
   await deleteSecret(OPENWEBUI_APIKEY_SECRET);
 }

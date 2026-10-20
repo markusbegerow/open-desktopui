@@ -46,6 +46,21 @@ describe("setAppPrefs", () => {
   });
 });
 
+describe("signOut", () => {
+  it("clears displayName and avatars but keeps the hideUsername preference", async () => {
+    const { setAppPrefs, getAppPrefs, signOut } = await import("./settingsStore");
+    await setAppPrefs({
+      displayName: "Ada",
+      avatar: "data:image/webp;base64,AAAA",
+      serverAvatar: "data:image/webp;base64,BBBB",
+      hideUsername: true,
+    });
+    await signOut();
+
+    expect(await getAppPrefs()).toEqual({ hideUsername: true });
+  });
+});
+
 describe("OpenWebUiConfig secret handling", () => {
   it("keeps apiKey out of the plain store and round-trips it via secureStore", async () => {
     const { setOpenWebUiConfig, getOpenWebUiConfig } = await import("./settingsStore");

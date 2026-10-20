@@ -143,6 +143,17 @@ pub async fn get_openwebui_current_user(base_url: String, token: String) -> Resu
     openwebui_client::get_current_user(base_url, token).await
 }
 
+/// Raw bytes of the account's Open WebUI profile image; the frontend crops it.
+#[tauri::command]
+pub async fn fetch_openwebui_profile_image(
+    base_url: String,
+    token: String,
+    image_url: String,
+) -> Result<tauri::ipc::Response, String> {
+    let bytes = openwebui_client::fetch_profile_image(base_url, token, image_url).await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 #[tauri::command]
 pub async fn trigger_sync(
     api_key: Option<String>,
@@ -198,6 +209,53 @@ pub async fn save_text_file(
     Ok(true)
 }
 
+const AVATAR_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+const MAX_AVATAR_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Rejects anything that isn't a reasonably sized PNG/JPEG/WebP file.
+fn check_avatar_file(path: &std::path::Path) -> Result<(), String> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !AVATAR_EXTENSIONS.contains(&ext.as_str()) {
+        return Err("Unsupported image type (use PNG, JPG or WebP)".into());
+    }
+    let len = std::fs::metadata(path)
+        .map_err(|e| format!("could not read {path:?}: {e}"))?
+        .len();
+    if len > MAX_AVATAR_BYTES {
+        return Err("Image is too large (max 5 MB)".into());
+    }
+    Ok(())
+}
+
+/// Asks the user to pick a profile picture (native dialog) and returns the
+/// raw image bytes; the frontend crops/downscales it. The path comes from the
+/// dialog on the Rust side, so injected script can't use this to read
+/// arbitrary files. Returns an empty response when the user cancels.
+#[tauri::command]
+pub async fn pick_avatar_image(app: tauri::AppHandle) -> Result<tauri::ipc::Response, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("Images", &AVATAR_EXTENSIONS)
+        .blocking_pick_file();
+    let Some(file) = picked else {
+        return Ok(tauri::ipc::Response::new(Vec::<u8>::new()));
+    };
+    let path = file
+        .into_path()
+        .map_err(|e| format!("invalid path: {e}"))?;
+    check_avatar_file(&path)?;
+    let bytes = std::fs::read(&path)
+        .map_err(|e| format!("could not read {path:?}: {e}"))
+        .inspect_err(|e| log::error!("[pick_avatar_image] {e}"))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 /// Moves each existing `dir/<name>` to `<name>.<tag>-<timestamp>` rather than
 /// deleting it. All-or-nothing: if one rename fails, the ones already done
 /// are undone. That matters for SQLite — a main file moved away while a stale
@@ -225,6 +283,31 @@ fn move_aside(
         moved.push((src, dest));
     }
     Ok(moved)
+}
+
+#[cfg(test)]
+mod avatar_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_unsupported_extensions() {
+        assert!(check_avatar_file(std::path::Path::new("x.gif")).is_err());
+        assert!(check_avatar_file(std::path::Path::new("noext")).is_err());
+    }
+
+    #[test]
+    fn accepts_small_supported_files_and_rejects_oversized() {
+        let dir = std::env::temp_dir().join(format!("odui-avatar-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let ok = dir.join("a.PNG");
+        std::fs::write(&ok, [0u8; 16]).unwrap();
+        assert!(check_avatar_file(&ok).is_ok());
+        let big = dir.join("b.jpg");
+        std::fs::write(&big, vec![0u8; MAX_AVATAR_BYTES as usize + 1]).unwrap();
+        assert!(check_avatar_file(&big).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]
@@ -391,8 +474,76 @@ pub async fn create_openwebui_chat(
     title: String,
     model: String,
     messages: Vec<ChatMessage>,
+    folder_id: Option<String>,
 ) -> Result<CreatedChat, String> {
-    openwebui_client::create_chat(base_url, api_key, title, model, messages).await
+    openwebui_client::create_chat(base_url, api_key, title, model, messages, folder_id).await
+}
+
+#[tauri::command]
+pub async fn list_openwebui_folders(
+    base_url: String,
+    token: String,
+) -> Result<Vec<openwebui_client::ServerFolder>, String> {
+    openwebui_client::list_folders(base_url, token).await
+}
+
+#[tauri::command]
+pub async fn create_openwebui_folder(
+    base_url: String,
+    token: String,
+    name: String,
+    parent_id: Option<String>,
+    system_prompt: Option<String>,
+    icon: Option<String>,
+) -> Result<openwebui_client::ServerFolder, String> {
+    openwebui_client::create_folder(base_url, token, name, parent_id, system_prompt, icon).await
+}
+
+#[tauri::command]
+pub async fn update_openwebui_folder(
+    base_url: String,
+    token: String,
+    id: String,
+    name: Option<String>,
+    system_prompt: Option<String>,
+    icon: Option<String>,
+) -> Result<(), String> {
+    openwebui_client::update_folder(base_url, token, id, name, system_prompt, icon).await
+}
+
+#[tauri::command]
+pub async fn update_openwebui_folder_parent(
+    base_url: String,
+    token: String,
+    id: String,
+    parent_id: Option<String>,
+) -> Result<(), String> {
+    openwebui_client::update_folder_parent(base_url, token, id, parent_id).await
+}
+
+#[tauri::command]
+pub async fn update_openwebui_folder_expanded(
+    base_url: String,
+    token: String,
+    id: String,
+    is_expanded: bool,
+) -> Result<(), String> {
+    openwebui_client::update_folder_expanded(base_url, token, id, is_expanded).await
+}
+
+#[tauri::command]
+pub async fn delete_openwebui_folder(base_url: String, token: String, id: String) -> Result<(), String> {
+    openwebui_client::delete_folder(base_url, token, id).await
+}
+
+#[tauri::command]
+pub async fn move_openwebui_chat_to_folder(
+    base_url: String,
+    token: String,
+    chat_id: String,
+    folder_id: Option<String>,
+) -> Result<(), String> {
+    openwebui_client::move_chat_to_folder(base_url, token, chat_id, folder_id).await
 }
 
 #[tauri::command]

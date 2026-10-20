@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentUser, login } from "../lib/openWebUiClient";
+import { syncServerAvatar } from "../lib/serverAvatar";
+import { pullFolders } from "../lib/folderSync";
 import { getOpenWebUiConfig, setAppPrefs, setOpenWebUiConfig } from "../lib/settingsStore";
 import { isInsecureRemoteUrl } from "../lib/network";
 
@@ -64,12 +66,15 @@ export default function LoginView({
         const user = await getCurrentUser(url, token);
         if (user.id) accountId = `${url}|${user.id}`;
         if (user.name) await setAppPrefs({ displayName: user.name });
+        await syncServerAvatar(url, token, user);
       } catch {
         // Non-fatal: falls back to the "unscoped" history bucket and the
         // manual Settings display-name field.
       }
 
       await setOpenWebUiConfig({ baseUrl: url, apiKey: token, accountId });
+      // Needs the saved session (and account scope), hence after the line above.
+      await pullFolders();
 
       // Also wire the local oikb sync daemon's own default connection
       // (~/.config/oikb/config.yaml) — previously only happened if the user

@@ -35,6 +35,7 @@ import {
   updateMessageContent,
   updateMessageTokens,
   updateMessageVote,
+  folderSystemPrompt,
 } from "../lib/chatHistory";
 
 // Desktop notification for a finished reply, only while the pref is on and
@@ -64,6 +65,8 @@ export interface ChatViewProps {
   initialMessage?: string | null;
   onInitialMessageConsumed?: () => void;
   initialModel?: string;
+  // Folder to file a newly created conversation in ("new chat here").
+  initialGroupId?: string | null;
   initialKnowledgeIds?: string[];
   initialAttachments?: PendingAttachment[];
   onInitialAttachmentsConsumed?: () => void;
@@ -80,6 +83,7 @@ export default function ChatView({
   initialMessage,
   onInitialMessageConsumed,
   initialModel,
+  initialGroupId,
   initialKnowledgeIds,
   initialAttachments,
   onInitialAttachmentsConsumed,
@@ -223,7 +227,7 @@ export default function ChatView({
   async function ensureConversation(title: string): Promise<string> {
     if (conversationIdRef.current) return conversationIdRef.current;
     const trimmedTitle = title.length > 48 ? `${title.slice(0, 48)}…` : title;
-    const created = await createConversation(model, trimmedTitle, selectedKnowledgeIds);
+    const created = await createConversation(model, trimmedTitle, selectedKnowledgeIds, initialGroupId ?? null);
     conversationIdRef.current = created.id;
     skipNextLoadRef.current = true;
     onConversationCreated(created.id);
@@ -241,6 +245,9 @@ export default function ChatView({
     setSending(true);
 
     const history: ChatMessage[] = historyMessages.map((m) => ({ role: m.role, content: m.content, files: m.files }));
+    // A folder's system prompt goes first; it's never stored as a chat message.
+    const folderPrompt = await folderSystemPrompt(convId);
+    if (folderPrompt) history.unshift({ role: "system", content: folderPrompt });
     const lastUserMsg = [...historyMessages].reverse().find((m) => m.role === "user");
 
     let acc: ChunkAccumulator = initialChunkAccumulator;
@@ -461,6 +468,7 @@ export default function ChatView({
 
       <ChatThread
         messages={messages}
+        conversationId={conversationId}
         onEditMessage={handleEditMessage}
         onRegenerate={handleRegenerate}
         onVote={handleVote}

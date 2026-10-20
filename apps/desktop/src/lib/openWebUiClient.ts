@@ -53,10 +53,19 @@ export interface CurrentUser {
   id: string | null;
   name: string | null;
   detectedLanguage: string | null;
+  profileImageUrl: string | null;
 }
 
 export async function getCurrentUser(baseUrl: string, token: string): Promise<CurrentUser> {
   return invoke("get_openwebui_current_user", { baseUrl, token });
+}
+
+export async function fetchProfileImage(
+  baseUrl: string,
+  token: string,
+  imageUrl: string,
+): Promise<ArrayBuffer> {
+  return invoke("fetch_openwebui_profile_image", { baseUrl, token, imageUrl });
 }
 
 export interface CreatedChat {
@@ -73,8 +82,75 @@ export async function createOpenWebUiChat(
   title: string,
   model: string,
   messages: ChatMessage[],
+  folderId?: string | null,
 ): Promise<CreatedChat> {
-  return invoke("create_openwebui_chat", { baseUrl, apiKey, title, model, messages });
+  return invoke("create_openwebui_chat", { baseUrl, apiKey, title, model, messages, folderId: folderId ?? null });
+}
+
+// Folders — shapes taken from Open WebUI's `routers/folders.py`; see the doc
+// comments in `openwebui_client.rs`. A 403 means the folders feature is
+// disabled or not permitted for this account.
+export interface ServerFolder {
+  id: string;
+  name: string;
+  parentId: string | null;
+  icon: string | null;
+  isExpanded: boolean;
+  systemPrompt: string | null;
+  // false when the per-folder lookup failed: keep the local prompt then.
+  systemPromptKnown: boolean;
+}
+
+export function listFolders(baseUrl: string, token: string): Promise<ServerFolder[]> {
+  return invoke("list_openwebui_folders", { baseUrl, token });
+}
+
+export function createFolder(
+  baseUrl: string,
+  token: string,
+  name: string,
+  parentId: string | null,
+  systemPrompt: string | null,
+  icon: string | null,
+): Promise<ServerFolder> {
+  return invoke("create_openwebui_folder", { baseUrl, token, name, parentId, systemPrompt, icon });
+}
+
+export function updateFolder(
+  baseUrl: string,
+  token: string,
+  id: string,
+  fields: { name?: string; systemPrompt?: string; icon?: string },
+): Promise<void> {
+  return invoke("update_openwebui_folder", {
+    baseUrl,
+    token,
+    id,
+    name: fields.name ?? null,
+    systemPrompt: fields.systemPrompt ?? null,
+    icon: fields.icon ?? null,
+  });
+}
+
+export function updateFolderParent(baseUrl: string, token: string, id: string, parentId: string | null): Promise<void> {
+  return invoke("update_openwebui_folder_parent", { baseUrl, token, id, parentId });
+}
+
+export function updateFolderExpanded(baseUrl: string, token: string, id: string, isExpanded: boolean): Promise<void> {
+  return invoke("update_openwebui_folder_expanded", { baseUrl, token, id, isExpanded });
+}
+
+export function deleteFolder(baseUrl: string, token: string, id: string): Promise<void> {
+  return invoke("delete_openwebui_folder", { baseUrl, token, id });
+}
+
+export function moveChatToFolder(
+  baseUrl: string,
+  token: string,
+  chatId: string,
+  folderId: string | null,
+): Promise<void> {
+  return invoke("move_openwebui_chat_to_folder", { baseUrl, token, chatId, folderId });
 }
 
 // ASSUMPTION — not yet verified against a live instance: see the doc

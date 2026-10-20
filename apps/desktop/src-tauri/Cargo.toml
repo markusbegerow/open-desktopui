@@ -1,6 +1,6 @@
 [package]
 name = "opendesktopui"
-version = "0.1.2"
+version = "0.1.3"
 description = "A native desktop chat client for Open WebUI, with oikb Knowledge Base sync built in"
 authors = ["Markus Begerow <mail@markus-begerow.de>"]
 edition = "2021"
@@ -37,7 +37,7 @@ tokio = { version = "1", features = ["time", "sync", "macros"] }
 tauri-plugin-stronghold = { version = "2.4.0", features = ["kdf"] }
 log = "0.4.34"
 tauri-plugin-log = "2.10.0"
-tauri-plugin-updater = "2.13.0"
+tauri-plugin-updater = { version = "2.13.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tauri-plugin-process = "2.4.0"
 
 [target.'cfg(windows)'.dependencies]

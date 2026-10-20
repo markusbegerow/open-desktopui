@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Conversation, Group } from "../lib/chatHistory";
 import { useFloatingMenu } from "../lib/useFloatingMenu";
+import { useTranslation } from "../lib/i18n";
+import { buildFolderTree, flattenFolders } from "../lib/folders";
 
 export interface ConversationMenuProps {
   conversation: Conversation;
@@ -33,6 +35,8 @@ export default function ConversationMenu({
   onCopyLink,
   onExport,
 }: ConversationMenuProps) {
+  const { t } = useTranslation();
+  const folderList = flattenFolders(buildFolderTree(groups));
   const [menuOpen, setMenuOpen] = useState(false);
   const [submenuOpen, setSubmenuOpen] = useState(false);
   const [openInMenuOpen, setOpenInMenuOpen] = useState(false);
@@ -151,7 +155,7 @@ export default function ConversationMenu({
           <hr className="picker-divider" />
 
           <button ref={groupItemRef} className="picker-option" type="button" onClick={toggleSubmenu}>
-            Move to group ▸
+            {t("folders.moveTo")}
           </button>
           <hr className="picker-divider" />
 
@@ -187,19 +191,20 @@ export default function ConversationMenu({
         >
           {conversation.group_id && (
             <button className="picker-option" type="button" onClick={() => run(() => onMoveToGroup(null))}>
-              No group
+              {t("folders.noFolder")}
             </button>
           )}
-          {groups
-            .filter((g) => g.id !== conversation.group_id)
-            .map((g) => (
+          {folderList
+            .filter(({ group }) => group.id !== conversation.group_id)
+            .map(({ group, depth }) => (
               <button
                 className="picker-option"
                 type="button"
-                key={g.id}
-                onClick={() => run(() => onMoveToGroup(g.id))}
+                key={group.id}
+                style={{ paddingLeft: 12 + depth * 14 }}
+                onClick={() => run(() => onMoveToGroup(group.id))}
               >
-                {g.name}
+                {group.name}
               </button>
             ))}
           <form
@@ -212,7 +217,7 @@ export default function ConversationMenu({
           >
             <input
               type="text"
-              placeholder="New group..."
+              placeholder={t("folders.newFolderInline")}
               value={newGroupName}
               onClick={(e) => e.stopPropagation()}
               onChange={(e) => setNewGroupName(e.target.value)}
