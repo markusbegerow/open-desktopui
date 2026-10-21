@@ -90,6 +90,8 @@ Honest, current-state list — update this as items get closed out, don't let it
 1. Add it to the repo's GitHub Actions secrets as `TAURI_SIGNING_PRIVATE_KEY` (paste the full contents of `.tauri-updater-key.pem`), and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if you set one (this key was generated with no password — `--ci` mode).
 2. **Decide where to back up `.tauri-updater-key.pem` itself, outside of GitHub Actions secrets** (a password manager, an offline vault, etc.) — this is the one piece of this whole setup that isn't safely re-generatable. If it's lost, every already-installed copy of the app has the *old* public key baked in and will refuse to trust updates signed by a new keypair, permanently breaking auto-updates for existing users until they manually reinstall.
 
+Also required: `bundle.createUpdaterArtifacts: true` in `tauri.conf.json`. Without it no `.sig` files or `latest.json` are produced, even with the secrets set (v0.1.3 shipped this way, so "Check for updates" failed).
+
 Until both of those are done, releases build and publish fine, just without a valid updater manifest — installs work, only the auto-update check doesn't yet.
 
 ## Dependency audits
