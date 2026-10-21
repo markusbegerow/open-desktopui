@@ -44,7 +44,7 @@ export default function AboutTab() {
       const message = err instanceof Error ? err.message : String(err);
       setUpdateError(
         message.includes("Could not fetch a valid release JSON")
-          ? "No update available yet — this app hasn't published a release."
+          ? "Couldn't find an update manifest (latest.json) on the latest release. Try again later."
           : message,
       );
     }
