@@ -31,12 +31,12 @@ export interface SyncOutcome {
   error?: string;
 }
 
-interface Session {
+export interface Session {
   baseUrl: string;
   token: string;
 }
 
-async function getSession(): Promise<Session | null> {
+export async function getSession(): Promise<Session | null> {
   const config = await getOpenWebUiConfig();
   if (!config?.baseUrl || !config.apiKey) return null;
   return { baseUrl: config.baseUrl.replace(/\/+$/, ""), token: config.apiKey };
@@ -274,7 +274,11 @@ export async function pullFolders(): Promise<boolean> {
       if (!g.openwebui_folder_id) continue;
       const remote = serverById.get(g.openwebui_folder_id);
       if (!remote) continue;
-      if (g.dirty) {
+      // The server is the source of truth: a folder it changed after our local
+      // edit takes the server's values and the unsent edit is dropped.
+      const serverWins = !!g.dirty && (remote.updatedAt ?? 0) > (g.updated_at ?? 0);
+      if (serverWins) await setGroupDirty(g.id, false);
+      if (g.dirty && !serverWins) {
         try {
           const parent = g.parent_id ? local.find((p) => p.id === g.parent_id) : null;
           await api.updateFolder(session.baseUrl, session.token, remote.id, {

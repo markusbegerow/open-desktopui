@@ -54,8 +54,13 @@ export default function ModelPicker({ models, selectedId, onSelect, disabled }: 
                 setOpen(false);
               }}
               type="button"
+              title={m.description ?? undefined}
             >
-              {m.name}
+              <span className="model-option-name">
+                {m.name}
+                {m.workspace && <span className="model-option-badge">preset</span>}
+              </span>
+              {m.description && <span className="model-option-description">{m.description}</span>}
             </button>
           ))}
         </div>

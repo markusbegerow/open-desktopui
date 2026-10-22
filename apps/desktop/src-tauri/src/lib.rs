@@ -4,6 +4,7 @@ mod mic_permissions;
 mod oikb_client;
 mod oikb_config;
 mod openwebui_client;
+mod paste;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
@@ -35,6 +36,19 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        // `opendesktopui://` links; after single-instance so a link opened while
+        // the app runs reaches the running window instead of starting a second one.
+        .plugin(tauri_plugin_deep_link::init())
+        // Remembers size and position of the main window (the quick chat window
+        // always opens fresh, centered).
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_denylist(&["quick"])
+                .build(),
+        )
+        // The quick-chat shortcut is registered from the frontend (it is a
+        // user setting); the plugin only provides the OS hook.
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(
@@ -144,6 +158,96 @@ pub fn run() {
                             ",
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 10,
+                            description: "track chat activity and Open WebUI sync state per conversation",
+                            sql: "
+                                ALTER TABLE conversations ADD COLUMN updated_at INTEGER;
+                                ALTER TABLE conversations ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0;
+                                ALTER TABLE conversations ADD COLUMN deleted_pending INTEGER NOT NULL DEFAULT 0;
+                                ALTER TABLE conversations ADD COLUMN server_updated_at INTEGER;
+                                ALTER TABLE conversations ADD COLUMN messages_stale INTEGER NOT NULL DEFAULT 0;
+                                UPDATE conversations SET updated_at = COALESCE(
+                                    (SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = conversations.id),
+                                    created_at
+                                );
+                                CREATE INDEX idx_conversations_openwebui_chat_id ON conversations(openwebui_chat_id);
+                            ",
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                        tauri_plugin_sql::Migration {
+                            version: 11,
+                            description: "sync unread state and thumbs feedback records with Open WebUI",
+                            sql: "
+                                ALTER TABLE conversations ADD COLUMN unread_ack_at INTEGER;
+                                ALTER TABLE messages ADD COLUMN feedback_id TEXT;
+                            ",
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                        tauri_plugin_sql::Migration {
+                            version: 12,
+                            description: "tags per conversation, mirrored from Open WebUI",
+                            sql: "
+                                CREATE TABLE conversation_tags (
+                                    conversation_id TEXT NOT NULL,
+                                    tag TEXT NOT NULL,
+                                    PRIMARY KEY (conversation_id, tag)
+                                );
+                                CREATE INDEX idx_conversation_tags_tag ON conversation_tags(tag);
+                            ",
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                        tauri_plugin_sql::Migration {
+                            version: 13,
+                            description: "keep a reply's reasoning and retrieved sources apart from its text",
+                            sql: "
+                                ALTER TABLE messages ADD COLUMN reasoning TEXT;
+                                ALTER TABLE messages ADD COLUMN reasoning_seconds INTEGER;
+                                ALTER TABLE messages ADD COLUMN sources TEXT;
+                            ",
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                        tauri_plugin_sql::Migration {
+                            version: 14,
+                            description: "per-chat settings (synced) and feature switches (device-local)",
+                            sql: "
+                                ALTER TABLE conversations ADD COLUMN params TEXT;
+                                ALTER TABLE conversations ADD COLUMN features TEXT;
+                            ",
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                        tauri_plugin_sql::Migration {
+                            version: 15,
+                            description: "local copies of the server's prompts, notes and memories (readable offline)",
+                            sql: "
+                                CREATE TABLE library_prompts (
+                                    id TEXT NOT NULL,
+                                    account_id TEXT NOT NULL,
+                                    command TEXT NOT NULL,
+                                    name TEXT NOT NULL,
+                                    content TEXT NOT NULL,
+                                    PRIMARY KEY (account_id, id)
+                                );
+                                CREATE TABLE library_notes (
+                                    id TEXT NOT NULL,
+                                    account_id TEXT NOT NULL,
+                                    title TEXT NOT NULL,
+                                    markdown TEXT NOT NULL,
+                                    pinned INTEGER NOT NULL DEFAULT 0,
+                                    created_at INTEGER NOT NULL,
+                                    updated_at INTEGER NOT NULL,
+                                    PRIMARY KEY (account_id, id)
+                                );
+                                CREATE TABLE library_memories (
+                                    id TEXT NOT NULL,
+                                    account_id TEXT NOT NULL,
+                                    content TEXT NOT NULL,
+                                    updated_at INTEGER NOT NULL,
+                                    PRIMARY KEY (account_id, id)
+                                );
+                            ",
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),
@@ -156,6 +260,11 @@ pub fn run() {
             // off (KeepRunningInTray state), in which case closing behaves
             // like a normal window and quits the app.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // The quick chat is throw-away: closing it really closes it, so
+                // the next shortcut press opens an empty one.
+                if window.label() == "quick" {
+                    return;
+                }
                 let keep_running = window
                     .state::<KeepRunningInTray>()
                     .0
@@ -180,6 +289,16 @@ pub fn run() {
                 .join("stronghold-salt.txt");
             app.handle()
                 .plugin(tauri_plugin_stronghold::Builder::with_argon2(&salt_path).build())?;
+
+            // In development (and for portable installs) the OS doesn't know the
+            // scheme yet; registering it makes `opendesktopui://` links work.
+            #[cfg(any(windows, target_os = "linux"))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(e) = app.deep_link().register_all() {
+                    log::warn!("could not register the opendesktopui:// scheme: {e}");
+                }
+            }
 
             let show_item = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
             let close_item = MenuItem::with_id(app, "close", "Close", true, None::<&str>)?;
@@ -257,6 +376,33 @@ pub fn run() {
             commands::update_openwebui_folder_expanded,
             commands::delete_openwebui_folder,
             commands::move_openwebui_chat_to_folder,
+            commands::list_openwebui_chats,
+            commands::get_openwebui_chat,
+            commands::update_openwebui_chat_title,
+            commands::update_openwebui_chat_content,
+            commands::delete_openwebui_chat,
+            commands::set_openwebui_chat_flag,
+            commands::mark_openwebui_chat_unread,
+            commands::list_openwebui_prompts,
+            commands::list_openwebui_notes,
+            commands::list_openwebui_files,
+            commands::fetch_web_page,
+            commands::create_openwebui_note,
+            commands::update_openwebui_note,
+            commands::delete_openwebui_note,
+            commands::list_openwebui_memories,
+            commands::add_openwebui_memory,
+            commands::update_openwebui_memory,
+            commands::delete_openwebui_memory,
+            commands::get_openwebui_server_features,
+            commands::list_openwebui_tools,
+            commands::show_quick_chat,
+            commands::open_in_main_window,
+            commands::save_pasted_image,
+            commands::open_openwebui_file,
+            commands::generate_openwebui_title,
+            commands::add_openwebui_chat_tag,
+            commands::remove_openwebui_chat_tag,
             commands::rate_openwebui_message,
             commands::save_text_file,
             commands::pick_avatar_image,

@@ -1,5 +1,6 @@
 :root {
   color-scheme: light dark;
+  --sb-accent: light-dark(#1d4ed8, #7ea1ff);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --menu-z: 50;
   --chat-font-size: 14px;
@@ -20,11 +21,11 @@ body {
 }
 
 .sidebar {
-  width: 180px;
+  width: 240px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  padding: 12px 8px;
+  padding: 14px 10px 10px;
   background: color-mix(in srgb, canvas 92%, canvastext 8%);
   border-right: 1px solid color-mix(in srgb, canvas 80%, canvastext 20%);
 }
@@ -34,20 +35,58 @@ body {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   min-height: 0;
+  scrollbar-width: thin;
 }
 
-.sidebar-toggle {
-  align-self: flex-end;
-  padding: 4px 8px;
-  margin-bottom: 8px;
-  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
-  border-radius: 6px;
-  background: transparent;
-  cursor: pointer;
-  color: inherit;
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px 14px 6px;
   flex-shrink: 0;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sidebar-brand-logo {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.sidebar-brand-name {
+  color: canvastext;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-icon {
+  flex-shrink: 0;
+}
+
+.sidebar .sidebar-toggle {
+  padding: 4px;
+  border-radius: 6px;
+  opacity: 0.7;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.sidebar .sidebar-toggle:hover {
+  opacity: 1;
 }
 
 .sidebar.collapsed {
@@ -55,23 +94,29 @@ body {
   padding: 12px 6px;
 }
 
-.sidebar.collapsed .sidebar-toggle {
-  align-self: center;
+.sidebar.collapsed .sidebar-header {
+  justify-content: center;
+  padding: 2px 0 10px;
+}
+
+.sidebar.collapsed .sidebar-brand {
+  display: none;
 }
 
 .sidebar-new-chat-collapsed {
   align-self: center;
-  width: 30px;
-  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
   padding: 0;
   margin-bottom: 8px;
-  border: 1px solid color-mix(in srgb, canvas 60%, canvastext 40%);
-  border-radius: 6px;
+  border: 0;
+  border-radius: 8px;
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: 16px;
-  font-weight: 600;
   flex-shrink: 0;
 }
 
@@ -86,7 +131,7 @@ body {
 
 .sidebar-search {
   padding: 8px 10px;
-  margin-bottom: 8px;
+  margin: 4px 0 8px;
   border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
   border-radius: 6px;
   background: color-mix(in srgb, canvas 95%, canvastext 5%);
@@ -103,7 +148,7 @@ body {
   padding: 8px 10px;
   border: none;
   background: transparent;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   color: inherit;
   font-size: 14px;
@@ -118,31 +163,69 @@ body {
   font-weight: 600;
 }
 
-.new-chat-button {
-  border: 1px solid color-mix(in srgb, canvas 60%, canvastext 40%) !important;
-  margin-bottom: 8px;
+.sidebar-section-label,
+.sidebar-group-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--sb-accent);
+  font-size: 13px;
   font-weight: 600;
 }
 
 .sidebar-section-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  opacity: 0.55;
-  padding: 12px 10px 4px;
+  padding: 14px 0 4px;
 }
 
-.folder-section-label {
+.sidebar-group-label {
+  padding: 12px 0 2px 10px;
+}
+
+.sidebar .section-toggle {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 6px;
+  color: inherit;
+  font-weight: inherit;
+  font-size: inherit;
 }
 
-.folder-add {
-  padding: 0 6px !important;
-  font-size: 14px;
+.sidebar .section-toggle:hover {
+  background: transparent;
+  filter: brightness(1.15);
+}
+
+.sidebar .section-toggle:disabled {
+  cursor: default;
+}
+
+.section-chevron {
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform 0.12s;
+  flex-shrink: 0;
+}
+
+.section-chevron.open {
+  transform: rotate(90deg);
+}
+
+.sidebar .folder-add {
+  padding: 0 8px;
+  color: canvastext;
+  font-size: 16px;
   line-height: 1.3;
-  opacity: 0.8;
+  opacity: 0.6;
+}
+
+.folder-empty {
+  padding: 2px 10px 6px 34px;
+  font-size: 12px;
+  opacity: 0.5;
 }
 
 .folder-row {
@@ -162,15 +245,8 @@ body {
   align-items: center;
   gap: 6px;
   text-align: left;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.folder-chevron {
-  width: 10px;
-  font-size: 10px;
-  opacity: 0.7;
-  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .folder-name {
@@ -285,7 +361,7 @@ img.sidebar-account-avatar {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .conversation-item.active {
@@ -301,14 +377,41 @@ img.sidebar-account-avatar {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #1d4ed8;
-  margin-right: 6px;
+  background: var(--sb-accent);
+  margin-right: 8px;
 }
 
 .conversation-item-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+.conversation-time {
+  flex-shrink: 0;
+  padding-right: 8px;
+  color: var(--sb-accent);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* The menu sits over the time and takes its place while the row is hovered. */
+/* Centered with flex, not `transform`: a transformed ancestor would become the
+   containing block of the menu's `position: fixed` list and the chat list's
+   overflow would clip it. */
+.conversation-item-row > .conversation-menu {
+  position: absolute;
+  right: 2px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+}
+
+.conversation-item-row:hover .conversation-time {
+  visibility: hidden;
 }
 
 .conversation-rename-input {
@@ -391,16 +494,6 @@ img.sidebar-account-avatar {
   background: transparent;
   color: inherit;
   font-size: 13px;
-}
-
-.sidebar-archived-toggle {
-  display: block;
-  width: 100%;
-  margin-top: 8px;
-  padding: 6px 10px !important;
-  font-size: 12px;
-  opacity: 0.7;
-  text-align: left;
 }
 
 .home-view {
@@ -1170,6 +1263,84 @@ fieldset button[type="submit"]:hover {
   margin-top: 8px;
 }
 
+/* One rounded card: input on top, toolbar and send button underneath */
+.composer-card {
+  position: relative;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  border-radius: 18px;
+  background: color-mix(in srgb, canvas 95%, canvastext 5%);
+}
+
+.composer-card:focus-within {
+  border-color: #1d4ed8;
+}
+
+.composer-card .composer-input-wrap {
+  position: static;
+}
+
+.composer-card .composer textarea {
+  padding: 14px 16px 6px;
+  border: none;
+  border-radius: 18px 18px 0 0;
+  background: transparent;
+}
+
+.composer-card .composer-send {
+  top: auto;
+  right: 10px;
+  bottom: 10px;
+  transform: none;
+}
+
+.composer-card .composer-send:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.composer-card .composer-toolbar {
+  margin-top: 0;
+  padding: 4px 54px 10px 10px;
+}
+
+.composer-icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.composer-icon-button:hover {
+  opacity: 1;
+  background: color-mix(in srgb, canvas 85%, canvastext 15%);
+}
+
+.composer-icon-button.active {
+  opacity: 1;
+  color: #3b82f6;
+}
+
+.composer-icon-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.composer-icon-button.mic-button.active {
+  color: #dc2626;
+  background: color-mix(in srgb, #dc2626 20%, canvas 80%);
+}
+
+.composer-card .picker-toggle {
+  border: none;
+}
+
 .composer-toolbar-left,
 .composer-toolbar-right {
   display: flex;
@@ -1185,24 +1356,6 @@ fieldset button[type="submit"]:hover {
   margin-bottom: 8px;
 }
 
-.mic-button {
-  font-size: 14px;
-  padding: 4px 10px;
-  border-radius: 6px;
-  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
-  background: transparent;
-  cursor: pointer;
-}
-
-.mic-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.mic-button.active {
-  background: color-mix(in srgb, #dc2626 20%, canvas 80%);
-  border-color: #dc2626;
-}
 
 .modal-backdrop {
   position: fixed;
@@ -1299,13 +1452,21 @@ fieldset button[type="submit"]:hover {
   animation: splash-fade-in 0.6s ease-out;
 }
 
-.splash-credit {
+.splash-credit,
+.splash-version {
   position: fixed;
   bottom: 16px;
-  right: 20px;
   font-size: 12px;
   color: #6b7280;
   animation: splash-fade-in 0.6s ease-out 0.2s both;
+}
+
+.splash-credit {
+  left: 20px;
+}
+
+.splash-version {
+  right: 20px;
 }
 
 @keyframes splash-fade-in {
@@ -1340,15 +1501,6 @@ fieldset button[type="submit"]:hover {
   border-radius: 8px;
   background: color-mix(in srgb, canvas 92%, canvastext 8%);
   border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
-}
-
-.attach-button {
-  font-size: 14px;
-  padding: 4px 10px;
-  border-radius: 6px;
-  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
-  background: transparent;
-  cursor: pointer;
 }
 
 .attachment-chip-row {
@@ -1541,4 +1693,614 @@ fieldset button[type="submit"]:hover {
 
 .server-line {
   margin-bottom: 12px;
+}
+
+/* Tags */
+.tag-filter {
+  margin: 8px 0 4px;
+}
+
+.tag-filter .picker-toggle.active {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #fff;
+}
+
+.tag-picker {
+  position: fixed;
+  z-index: calc(var(--menu-z) + 1);
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  border-radius: 10px;
+  background: canvas;
+  color: canvastext;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.tag-picker input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.tag-picker-chat {
+  margin: 0 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-picker-list {
+  max-height: 220px;
+  margin-top: 6px;
+  overflow-y: auto;
+}
+
+/* Search hit in a message text: shown under the chat title */
+.conversation-snippet {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.65;
+}
+
+/* Attachment chip that opens the file when clicked */
+button.attachment-chip-open {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+button.attachment-chip-open:hover {
+  background: color-mix(in srgb, canvas 85%, canvastext 15%);
+}
+
+/* Quick chat window (global shortcut) */
+.quick-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: canvas;
+  color: canvastext;
+}
+
+.quick-shell .view.chat-view {
+  flex: 1;
+  min-height: 0;
+}
+
+.quick-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, canvas 80%, canvastext 20%);
+}
+
+.quick-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.quick-note {
+  padding: 24px;
+}
+
+/* Capture field for the quick chat shortcut in Settings */
+.shortcut-capture {
+  min-width: 220px;
+  cursor: pointer;
+}
+
+/* Reasoning and sources under an answer */
+.reasoning-block,
+.sources-block {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: color-mix(in srgb, canvastext 70%, canvas 30%);
+}
+
+.reasoning-block summary,
+.sources-block summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.reasoning-text {
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  white-space: pre-wrap;
+}
+
+.sources-block {
+  margin: 10px 0 0;
+}
+
+.sources-list {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.sources-list li {
+  margin-bottom: 4px;
+}
+
+.source-name {
+  font-weight: 600;
+}
+
+.source-snippet {
+  display: block;
+  opacity: 0.75;
+}
+
+/* Mermaid diagrams */
+.mermaid-diagram {
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-loading {
+  opacity: 0.5;
+}
+
+/* Formulas that don't fit the width scroll instead of overflowing */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* Options menu in the composer toolbar: tools, feature switches, chat settings */
+.options-popover {
+  position: relative;
+}
+
+.options-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: var(--menu-z, 20);
+  min-width: 240px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  border-radius: 12px;
+  background: canvas;
+  color: canvastext;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.options-menu-wide {
+  width: 320px;
+  padding: 10px;
+}
+
+.options-row,
+.options-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.options-row:hover,
+.options-back:hover {
+  background: color-mix(in srgb, canvas 85%, canvastext 15%);
+}
+
+.options-back {
+  margin-bottom: 6px;
+  padding: 4px 6px;
+}
+
+.options-row-label {
+  flex: 1;
+}
+
+.options-count {
+  color: #3b82f6;
+  font-weight: 600;
+}
+
+.options-chevron {
+  opacity: 0.6;
+}
+
+.options-toggle {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  flex: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, canvas 60%, canvastext 40%);
+  transition: background-color 0.15s ease;
+}
+
+.options-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+
+.options-toggle.on {
+  background: #1d4ed8;
+}
+
+.options-toggle.on::after {
+  transform: translateX(14px);
+}
+
+.options-settings,
+.options-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.options-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.options-field input,
+.options-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+}
+
+.options-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+/* Pictures in replies */
+.chat-image {
+  display: block;
+  max-width: 100%;
+  border-radius: 8px;
+  margin: 6px 0;
+}
+
+.image-unavailable,
+.image-loading {
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+/* Model list entries with a description */
+.model-option-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-option-badge {
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, canvas 60%, canvastext 40%);
+  border-radius: 999px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.model-option-description {
+  display: block;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  opacity: 0.65;
+}
+
+/* Prompt palette above the composer */
+.composer-input-wrap {
+  position: relative;
+}
+
+.prompt-palette {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: var(--menu-z, 20);
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  border-radius: 10px;
+  background: canvas;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.prompt-palette li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.prompt-palette li.active {
+  background: color-mix(in srgb, canvas 80%, canvastext 20%);
+}
+
+.prompt-command {
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+}
+
+.prompt-name {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.prompt-variables {
+  max-width: 460px;
+}
+
+/* Navigation entries at the top of the sidebar */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar .sidebar-nav-button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+.sidebar .sidebar-nav-button.active {
+  background: color-mix(in srgb, canvas 85%, canvastext 15%);
+  font-weight: 500;
+}
+
+/* Notes */
+.notes-view {
+  display: flex;
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+}
+
+.notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 260px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.notes-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.notes-list-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.notes-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notes-list-item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.notes-list-item:hover,
+.notes-list-item.active {
+  background: color-mix(in srgb, canvas 85%, canvastext 15%);
+}
+
+.notes-list-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.notes-list-date {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.notes-editor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.notes-title-input {
+  padding: 8px 10px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.notes-body-input,
+.notes-preview {
+  flex: 1;
+  min-height: 200px;
+  overflow-y: auto;
+  padding: 10px;
+  box-sizing: border-box;
+  font: inherit;
+  resize: none;
+}
+
+.notes-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notes-status {
+  flex: 1;
+}
+
+/* Memories */
+.memory-add input {
+  flex: 1;
+}
+
+.memory-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, canvas 85%, canvastext 15%);
+}
+
+.memory-text,
+.memory-list textarea {
+  flex: 1;
+}
+
+/* "Update available" hint above the account button */
+.sidebar-update {
+  margin: 0 8px 6px;
+  padding: 6px 10px;
+  border: 1px solid #1d4ed8;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-update:hover {
+  background: color-mix(in srgb, canvas 85%, #1d4ed8 15%);
+}
+
+/* Sub-pages of the "+" menu: a web address field and long, filterable lists */
+.options-web {
+  display: flex;
+  gap: 6px;
+}
+
+.options-web input,
+.options-filter {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 13px;
+}
+
+.options-filter {
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+.options-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.options-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notes-list-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notes-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* Notes docked beside the chat */
+.notes-panel {
+  flex: none;
+  width: clamp(420px, 48%, 760px);
+  box-sizing: border-box;
+  padding: 16px;
+  border-left: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.notes-panel .notes-view {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.notes-panel .notes-list {
+  width: 180px;
 }

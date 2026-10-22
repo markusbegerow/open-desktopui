@@ -4,8 +4,13 @@
 // needs a real chat_id/message_id pair on the server, so it shares this same
 // "ensure it's been shared" step).
 import type { Conversation } from "./chatHistory";
-import { getMessages, setConversationOpenWebUiChatId, setMessageOpenWebUiId } from "./chatHistory";
-import { createOpenWebUiChat } from "./openWebUiClient";
+import {
+  getMessages,
+  setConversationOpenWebUiChatId,
+  setConversationServerUpdatedAt,
+  setMessageOpenWebUiId,
+} from "./chatHistory";
+import { createOpenWebUiChat, getChat } from "./openWebUiClient";
 import { getOpenWebUiConfig } from "./settingsStore";
 import { serverFolderIdFor } from "./folderSync";
 
@@ -36,6 +41,14 @@ export async function ensureSharedChat(conversation: Conversation): Promise<Shar
   );
 
   await setConversationOpenWebUiChatId(conversation.id, created.id);
+  // Baseline for the sync: the server's timestamp for what we just uploaded, so
+  // later local edits aren't mistaken for a conflict with it.
+  try {
+    const detail = await getChat(config.baseUrl, config.apiKey || "", created.id);
+    if (detail.chat.updatedAt) await setConversationServerUpdatedAt(conversation.id, detail.chat.updatedAt);
+  } catch {
+    // Best effort.
+  }
   await Promise.all(
     stored.map((m, i) => (created.messageIds[i] ? setMessageOpenWebUiId(m.id, created.messageIds[i]) : null)),
   );

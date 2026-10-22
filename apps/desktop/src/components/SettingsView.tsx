@@ -15,6 +15,10 @@ import {
 import { clearHistory, closeChatDb, getMessages, listConversations } from "../lib/chatHistory";
 import { applyChatTextSize, applyTheme, Theme } from "../lib/theme";
 import type { AppPrefs } from "../lib/settingsStore";
+import MemoriesPanel from "./MemoriesPanel";
+import { DEFAULT_QUICK_CHAT_SHORTCUT, acceleratorFrom, acceleratorLabel } from "../lib/accelerator";
+import { applyQuickChatShortcut, configuredShortcut } from "../lib/quickChatShortcut";
+import { SHORTCUT_LIST } from "../lib/shortcuts";
 import { consumeVaultResetNotice } from "../lib/secureStore";
 import { getCurrentUser, listModels, OpenWebUiModel } from "../lib/openWebUiClient";
 import { Language, resolveLanguage, useTranslation } from "../lib/i18n";
@@ -23,9 +27,9 @@ import { avatarInitial, cropToSquareDataUrl } from "../lib/avatar";
 import AboutTab from "./AboutTab";
 import KbSyncView from "./KbSyncView";
 
-export type SettingsTab = "general" | "account" | "knowledge" | "system" | "privacy" | "about";
+export type SettingsTab = "general" | "account" | "knowledge" | "memory" | "system" | "privacy" | "about";
 
-const TAB_IDS: SettingsTab[] = ["general", "account", "knowledge", "system", "privacy", "about"];
+const TAB_IDS: SettingsTab[] = ["general", "account", "knowledge", "memory", "system", "privacy", "about"];
 
 export interface SettingsViewProps {
   activeTab: SettingsTab;
@@ -63,6 +67,7 @@ export default function SettingsView({
   const [chatTextSize, setChatTextSize] = useState<NonNullable<AppPrefs["chatTextSize"]>>("medium");
   const [sendKey, setSendKey] = useState<NonNullable<AppPrefs["sendKey"]>>("enter");
   const [notifyOnReply, setNotifyOnReply] = useState(false);
+  const [aiTitles, setAiTitles] = useState(true);
   const [notifyWarning, setNotifyWarning] = useState<string | null>(null);
   const [defaultModelId, setDefaultModelId] = useState("");
   const [models, setModels] = useState<OpenWebUiModel[]>([]);
@@ -74,6 +79,11 @@ export default function SettingsView({
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [systemError, setSystemError] = useState<string | null>(null);
   const [keepRunningInTray, setKeepRunningInTray] = useState(true);
+  const [autoUpdateCheck, setAutoUpdateCheck] = useState(true);
+  // The quick chat shortcut as a global-shortcut accelerator; "" = switched off.
+  const [quickShortcut, setQuickShortcut] = useState(DEFAULT_QUICK_CHAT_SHORTCUT);
+  const [lastQuickShortcut, setLastQuickShortcut] = useState(DEFAULT_QUICK_CHAT_SHORTCUT);
+  const [quickShortcutError, setQuickShortcutError] = useState<string | null>(null);
   const [avatar, setAvatar] = useState<string | undefined>(undefined);
   const [serverAvatar, setServerAvatar] = useState<string | undefined>(undefined);
   const [hideUsername, setHideUsername] = useState(false);
@@ -102,9 +112,14 @@ export default function SettingsView({
         setChatTextSize(prefs?.chatTextSize ?? "medium");
         setSendKey(prefs?.sendKey ?? "enter");
         setNotifyOnReply(prefs?.notifyOnReply ?? false);
+        setAiTitles(prefs?.aiTitles ?? true);
         setDefaultModelId(prefs?.defaultModelId ?? "");
         setLanguagePref(prefs?.language ?? "auto");
         setKeepRunningInTray(prefs?.keepRunningInTray ?? true);
+        setAutoUpdateCheck(prefs?.autoUpdateCheck ?? true);
+        const shortcut = configuredShortcut(prefs?.quickChatShortcut) ?? "";
+        setQuickShortcut(shortcut);
+        if (shortcut) setLastQuickShortcut(shortcut);
         setAvatar(prefs?.avatar);
         setServerAvatar(prefs?.serverAvatar);
         setHideUsername(prefs?.hideUsername ?? false);
@@ -243,6 +258,11 @@ export default function SettingsView({
     await setAppPrefs({ defaultModelId: next || undefined });
   }
 
+  async function handleAiTitlesToggle(next: boolean) {
+    setAiTitles(next);
+    await setAppPrefs({ aiTitles: next });
+  }
+
   async function handleNotifyToggle(next: boolean) {
     setNotifyOnReply(next);
     setNotifyWarning(null);
@@ -267,6 +287,25 @@ export default function SettingsView({
       setAutostartEnabled(!next);
       setSystemError(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  // Registers the quick chat shortcut ("" = off). If the OS refuses the
+  // combination (another app owns it) the old one is put back.
+  async function applyShortcut(next: string) {
+    const previous = quickShortcut;
+    setQuickShortcutError(null);
+    try {
+      await applyQuickChatShortcut(next || null);
+    } catch (err) {
+      setQuickShortcutError(
+        `${t("settings.quickChatFailed")} (${err instanceof Error ? err.message : String(err)})`,
+      );
+      await applyQuickChatShortcut(previous || null).catch(() => undefined);
+      return;
+    }
+    setQuickShortcut(next);
+    if (next) setLastQuickShortcut(next);
+    await setAppPrefs({ quickChatShortcut: next });
   }
 
   async function handleKeepRunningInTrayChange(next: boolean) {
@@ -441,6 +480,7 @@ export default function SettingsView({
 
       <div role="tabpanel" id={`settings-panel-${activeTab}`} aria-labelledby={`settings-tab-${activeTab}`}>
         {activeTab === "knowledge" && <KbSyncView />}
+        {activeTab === "memory" && <MemoriesPanel />}
         {activeTab === "about" && <AboutTab />}
 
         {activeTab === "general" && (
@@ -526,6 +566,15 @@ export default function SettingsView({
                   <option value="push-to-talk">{t("settings.micPushToTalk")}</option>
                 </select>
               </label>
+            </fieldset>
+
+            <fieldset>
+              <legend>{t("settings.chatTitles")}</legend>
+              <label className="row">
+                <input type="checkbox" checked={aiTitles} onChange={(e) => handleAiTitlesToggle(e.target.checked)} />
+                {t("settings.aiTitles")}
+              </label>
+              <p className="hint">{t("settings.aiTitlesHint")}</p>
             </fieldset>
 
             <fieldset>
@@ -687,7 +736,55 @@ export default function SettingsView({
               />
               {t("settings.keepRunningInTray")}
             </label>
+            <label className="row">
+              <input
+                type="checkbox"
+                checked={autoUpdateCheck}
+                onChange={(e) => {
+                  setAutoUpdateCheck(e.target.checked);
+                  void setAppPrefs({ autoUpdateCheck: e.target.checked });
+                }}
+              />
+              {t("settings.autoUpdateCheck")}
+            </label>
             {systemError && <p className="status-error">{systemError}</p>}
+          </fieldset>
+        )}
+
+        {activeTab === "system" && (
+          <fieldset>
+            <legend>{t("settings.quickChat")}</legend>
+            <label className="row">
+              <input
+                type="checkbox"
+                checked={quickShortcut !== ""}
+                onChange={(e) => applyShortcut(e.target.checked ? lastQuickShortcut : "")}
+              />
+              {t("settings.quickChatEnable")}
+            </label>
+            <label className="row">
+              {t("settings.quickChatShortcut")}
+              <input
+                type="text"
+                className="shortcut-capture"
+                readOnly
+                disabled={quickShortcut === ""}
+                value={quickShortcut === "" ? "" : acceleratorLabel(quickShortcut)}
+                placeholder={t("settings.quickChatPress")}
+                onKeyDown={(e) => {
+                  if (e.key === "Tab") return;
+                  e.preventDefault();
+                  const accelerator = acceleratorFrom(e.nativeEvent);
+                  if (accelerator) void applyShortcut(accelerator);
+                }}
+              />
+            </label>
+            <p className="hint">{t("settings.quickChatHint")}</p>
+            {quickShortcutError && <p className="status-error">{quickShortcutError}</p>}
+            <p className="hint">
+              {t("settings.shortcutsInApp")}{" "}
+              {SHORTCUT_LIST.map((s) => `${s.keys} ${t(`settings.shortcut.${s.action}`)}`).join(" · ")}
+            </p>
           </fieldset>
         )}
 

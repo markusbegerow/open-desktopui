@@ -1,14 +1,21 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { followScrollTop, isUserScroll } from "../lib/scroll";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
+import MarkdownBody from "./MarkdownBody";
+import { ReasoningBlock, SourcesList } from "./MessageExtras";
 import type { ChatMessage } from "../lib/openWebUiClient";
 
 export interface DisplayMessage extends ChatMessage {
   id: string;
   streaming?: boolean;
-  attachments?: { filename: string; mimeType: string }[];
+  // The model's thinking, apart from the answer in `content`
+  reasoning?: string;
+  reasoningSeconds?: number;
+  // the model is thinking right now (the reply has no answer text yet)
+  thinking?: boolean;
+  // retrieved documents behind the answer, raw as Open WebUI sends them
+  sources?: unknown[];
+  // `fileId` is the file's id on the server; with it the chip opens the file.
+  attachments?: { filename: string; mimeType: string; fileId?: string }[];
   createdAt?: number;
   vote?: number; // -1, 0, or 1 — thumbs down/none/up, sent to Open WebUI
 }
@@ -21,6 +28,8 @@ export interface ChatThreadProps {
   onEditMessage: (id: string, text: string) => void;
   onRegenerate: (id: string) => void;
   onVote: (id: string, rating: number) => void;
+  // Click on an attachment chip: download the file and open it.
+  onOpenAttachment?: (attachment: { fileId: string; filename: string }) => void;
 }
 
 // Small inline icons matching the send button's style in Composer.tsx
@@ -127,6 +136,7 @@ export default function ChatThread({
   onEditMessage,
   onRegenerate,
   onVote,
+  onOpenAttachment,
 }: ChatThreadProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -235,14 +245,32 @@ export default function ChatThread({
             <div className="chat-message-role">{m.role === "user" ? "You" : "Assistant"}</div>
             {m.attachments && m.attachments.length > 0 && (
               <div className="attachment-chip-row">
-                {m.attachments.map((a, i) => (
-                  <span key={i} className="attachment-chip">
-                    <span className="attachment-chip-icon">
-                      {a.mimeType.startsWith("image/") ? "🖼" : "📄"}
-                    </span>
-                    <span className="attachment-chip-name">{a.filename}</span>
-                  </span>
-                ))}
+                {m.attachments.map((a, i) => {
+                  const icon = (
+                    <span className="attachment-chip-icon">{a.mimeType.startsWith("image/") ? "🖼" : "📄"}</span>
+                  );
+                  const fileId = a.fileId;
+                  if (!fileId || !onOpenAttachment) {
+                    return (
+                      <span key={i} className="attachment-chip">
+                        {icon}
+                        <span className="attachment-chip-name">{a.filename}</span>
+                      </span>
+                    );
+                  }
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      className="attachment-chip attachment-chip-open"
+                      title={a.filename}
+                      onClick={() => onOpenAttachment({ fileId, filename: a.filename })}
+                    >
+                      {icon}
+                      <span className="attachment-chip-name">{a.filename}</span>
+                    </button>
+                  );
+                })}
               </div>
             )}
             {editingId === m.id ? (
@@ -264,17 +292,19 @@ export default function ChatThread({
               </div>
             ) : (
               <div className="chat-message-content">
-                {m.streaming && !m.content ? (
+                {m.reasoning && (
+                  <ReasoningBlock text={m.reasoning} seconds={m.reasoningSeconds} thinking={m.thinking} />
+                )}
+                {m.streaming && !m.content && !m.reasoning ? (
                   <span className="thinking-indicator" aria-label="Assistant is thinking">
                     <span className="thinking-dot" />
                     <span className="thinking-dot" />
                     <span className="thinking-dot" />
                   </span>
                 ) : (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                    {m.content}
-                  </ReactMarkdown>
+                  m.content && <MarkdownBody text={m.content} streaming={m.streaming} />
                 )}
+                {m.sources && m.sources.length > 0 && !m.streaming && <SourcesList sources={m.sources} />}
               </div>
             )}
             {!m.streaming && editingId !== m.id && (

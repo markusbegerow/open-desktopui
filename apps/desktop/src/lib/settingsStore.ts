@@ -71,6 +71,22 @@ export interface AppPrefs {
   // Desktop notification when an assistant reply finishes while the window
   // isn't focused. Defaults to off.
   notifyOnReply?: boolean;
+  // Let the server write the title of a new chat after its first reply (as the
+  // web UI does). Defaults to on; off keeps the start of the first message.
+  aiTitles?: boolean;
+  // System-wide shortcut that opens the quick chat window, as a global-shortcut
+  // accelerator ("CommandOrControl+Alt+Space"). Unset = that default, "" = off.
+  quickChatShortcut?: string;
+  // Look for a new version once a day in the background. Defaults to on.
+  autoUpdateCheck?: boolean;
+  lastUpdateCheck?: number;
+  // Sidebar sections the user folded away ("chats", "folders", a date group's key …).
+  collapsedSections?: string[];
+  // The newest version the user has already been told about.
+  notifiedUpdateVersion?: string;
+  // The newer version found by the last check ("" when up to date), so the hint
+  // is there right at the next start without asking the server again.
+  availableUpdateVersion?: string;
   chatTextSize?: "small" | "medium" | "large";
   // "auto": detected from Open WebUI's user info, falling back to English.
   language?: "auto" | "en" | "es" | "de";

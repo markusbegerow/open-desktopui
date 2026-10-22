@@ -38,13 +38,29 @@ A native, cross-platform desktop chat client that talks directly to your own **O
 
 ### 💬 Chat
 - Streaming responses straight from your Open WebUI server (no cloud middleman)
-- Drag-and-drop or picker-based **file attachments** (documents + images), uploaded and referenced in the conversation
+- One **"+" menu** for everything that goes into a message: upload files (or drag and drop them), take a **screenshot**, attach a **web page**, pick files already on your server, attach your **notes**, reference other **chats**, and choose **Knowledge Bases** for the chat
 - **Voice input**: push-to-talk or click-to-toggle, transcribed via your own server - no third-party cloud speech service involved
 - Per-message actions: copy, edit-and-resend, regenerate, read-aloud, and thumbs up/down feedback
 - Pin, mark unread, archive, and group conversations; open any chat in its own window
+- Chats are grouped by activity (Today, Yesterday, previous 7 and 30 days, then by month)
+- **Two-way sync with your Open WebUI account**: every chat - messages, ratings, attachments, knowledge bases, folders, pinned/archived/unread state - is cloned locally and kept in step. The server wins conflicts, and everything stays readable offline
+- Replies show their **sources** (knowledge-base documents, web pages), the model's **reasoning** in a collapsible block, **formulas** (KaTeX) and **Mermaid diagrams**
+- Per-chat **system prompt and parameters** (temperature, top-p, max tokens, seed, stop words), plus switches for **web search, image generation, code interpreter, memory** and server **tools** - all behind one **options menu** in the message box, and offered only where the model and your server support them
+- **Tags**, AI-written chat titles, and a search that also looks inside message texts (works offline)
+- A **prompt library**: type `/` in the message box to insert your server's prompts, including `{{variables}}`
+- **Notes** and **memory** of your Open WebUI account, readable offline and edited through the server
 - Export a conversation as Markdown, or your whole local history as JSON
-- Push a local conversation into your Open WebUI account as a real chat, or copy a shareable link to it
+- Copy a shareable link to a chat, or an app link (`opendesktopui://chat/<id>`) that opens it in this app
+- Paste images from the clipboard; click an attachment to open it
+- One compact message box: "+" and options on the left, model, microphone and send on the right
 - Light/dark/system theme, adjustable chat text size, collapsible sidebar
+
+### 🖥️ Desktop
+- **Quick chat**: a global shortcut (default `Ctrl+Alt+Space`, changeable in Settings → System) opens a small chat window from any application
+- In-app shortcuts: `Ctrl+N` new chat, `Ctrl+K` search, `Ctrl+,` settings
+- `opendesktopui://` links: `chat/<id>` opens a chat, `new?q=<text>` starts one with the text filled in
+- Remembers window size and position, lives in the tray, optional start with the system
+- Looks for new versions shortly after start and then once a day in the background, and tells you in the sidebar - a version found earlier shows right at start (switch off in Settings → System)
 
 ### 📚 Knowledge Base Sync (powered by [oikb](https://github.com/open-webui/oikb))
 - Add local folders (and 40+ other source types oikb supports) as sync sources for your Open WebUI Knowledge Bases
@@ -55,7 +71,7 @@ A native, cross-platform desktop chat client that talks directly to your own **O
 
 - Windows 10/11, macOS 11+, or a modern Linux desktop
 - A running [Open WebUI](https://github.com/open-webui/open-webui) server you have a URL and account for
-- For Knowledge Base Sync specifically: Python 3.11+, [uv](https://docs.astral.sh/uv/), and a local checkout of [`oikb`](https://github.com/open-webui/oikb) - see [Known Limitations](#known-limitations)
+- For Knowledge Base Sync: nothing extra with the prebuilt installers, which ship oikb. When building from source, Python 3.11+, [uv](https://docs.astral.sh/uv/) and a local checkout of [`oikb`](https://github.com/open-webui/oikb) - see [Known Limitations](#known-limitations)
 
 ## Installation
 
@@ -75,7 +91,7 @@ You only need to do this once per install.
 
 1. Launch the app and sign in with your Open WebUI server's URL and your account (or paste a static API key for SSO-only servers, in Settings → Account).
 2. Pick a model and start chatting from Home, or create a new chat from the sidebar.
-3. To sync Knowledge Bases: open Settings → Knowledge, point it at an `oikb` checkout, and add a source folder.
+3. To sync Knowledge Bases: open Settings → Knowledge and add a source folder. (From-source builds: point Settings → Knowledge at an `oikb` checkout first.)
 
 ## Development
 
@@ -100,7 +116,7 @@ cargo check
 cargo build
 ```
 
-There's no configured lint or test runner yet - `tsc --noEmit` and `cargo check` are the correctness gates in practice. See [`docs/RELEASING.md`](docs/RELEASING.md) for how the cross-platform release pipeline works.
+There's no configured linter. Run the tests with `npm test` (Vitest) from `apps/desktop/` and `cargo test --lib` from `apps/desktop/src-tauri/`; `tsc --noEmit` and `cargo check` are the other correctness gates. See [`docs/RELEASING.md`](docs/RELEASING.md) for how the cross-platform release pipeline works.
 
 ### Project structure
 
@@ -108,16 +124,18 @@ There's no configured lint or test runner yet - `tsc --noEmit` and `cargo check`
 oikb-desktop/
 ├── apps/desktop/       # the Tauri app - React/TS frontend (src/) + Rust backend (src-tauri/)
 ├── oikb-main/          # oikb Python project, vendored unmodified as an external dependency
-├── packaging/          # PyInstaller packaging for bundling oikb as a sidecar (not yet wired up)
+├── packaging/          # PyInstaller packaging that freezes oikb into the sidecar the release workflow bundles
 └── docs/               # additional docs (release pipeline, etc.)
 ```
 
 ## Known Limitations
 
 - **Installers aren't code-signed.** There's no plan to buy a Windows/Apple code-signing certificate right now - see [Installation](#installation) above for the (one-time, per-install) steps to run the app anyway.
-- **The oikb sidecar isn't bundled into the packaged app yet.** Knowledge Base Sync needs a separate `uv` install and an `oikb` checkout on your machine (pointed at from Settings → Knowledge) - it isn't a zero-setup feature out of the box today.
+- **The bundled oikb is untested on some platforms.** The release workflow freezes oikb with PyInstaller and bundles it, and the app starts it first; if it can't be started (a connector that doesn't freeze cleanly, a platform nobody has tried), the app falls back to `uv run oikb daemon` from the `oikb` checkout set in Settings → Knowledge. Development builds always use that fallback.
 - **Local data isn't encrypted at rest.** Chat history and settings are stored as a plain SQLite database and JSON file on disk (path shown in Settings → Account → Data).
-- **Two Open WebUI integrations are best-effort, not verified against every server**: pushing a conversation into your Open WebUI account ("Open in Open WebUI" / "Share Link") and message feedback (thumbs up/down) both call endpoints whose exact request/response shape was inferred from Open WebUI's general API conventions, not confirmed live against every version. If either doesn't work against your server, please [open an issue](https://github.com/markusbegerow/open-desktopui/issues) with what you see - everything else in the app (chat, models, knowledge bases, sign-in, file upload, transcription) has been verified against a live server.
+- **The account sync is written from Open WebUI's source, not checked against every server version.** Chat list and messages, tags, titles, ratings (`/api/v1/evaluations/feedback`), per-chat settings, prompts, notes and memory use the routes and data shapes found in Open WebUI's code. Different versions may differ in details; if something doesn't sync with your server, please [open an issue](https://github.com/markusbegerow/open-desktopui/issues) with what you see. Chat, models, knowledge bases, sign-in, file upload and transcription were verified against a live server earlier.
+- **Reading a chat here doesn't mark it read in the web interface.** Open WebUI learns about reading through its websocket, which this app doesn't use. "Mark as unread" does reach the server.
+- **Search ignores case only for ASCII letters.** Searching "KÜNDIGUNG" won't find "kündigung".
 
 ## Contributing
 
