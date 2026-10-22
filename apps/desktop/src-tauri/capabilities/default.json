@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main", "chat-*"],
+  "description": "Capability for the main window, the chat windows and the quick chat",
+  "windows": ["main", "chat-*", "quick"],
   "permissions": [
     "core:default",
     "opener:default",
@@ -18,6 +18,10 @@
     "stronghold:allow-remove-store-record",
     "log:default",
     "updater:default",
-    "process:default"
+    "process:default",
+    "deep-link:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-is-registered"
   ]
 }

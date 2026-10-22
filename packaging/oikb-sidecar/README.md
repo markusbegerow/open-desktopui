@@ -1,8 +1,9 @@
 # oikb sidecar packaging
 
-Freezes oikb (vendored unmodified in `../../oikb-main/`) into a standalone
-binary via PyInstaller, so a packaged Open DesktopUI build doesn't need the
-end user to have Python or `uv` installed — see `oikb.spec` for the details.
+Freezes oikb (vendored unmodified in `../../oikb-main/`, or fetched by the
+release workflow) into a standalone binary via PyInstaller, so a packaged Open
+DesktopUI build doesn't need the end user to have Python or `uv` installed — see
+`oikb.spec` for the details.
 
 ## Building
 
@@ -21,37 +22,36 @@ dependency, since we don't know ahead of time which sources a given user
 will configure) into a throwaway `.build-venv/`, then run PyInstaller. The
 resulting binary lands at `dist/oikb` (`dist/oikb.exe` on Windows).
 
-## Before wiring this into CI
+## How it plugs into the Tauri build
 
-**Run a build once by hand and actually exercise the binary** —
-`./dist/oikb --help`, then a real `daemon` invocation against a test
-`.oikb.yaml` — before trusting `.github/workflows/release.yml`'s automated
-build of it. oikb's optional dependencies (`pymupdf`, `oci`,
-`google-api-python-client`, ...) are exactly the kind of thing that can fail
-to freeze cleanly (missing hidden imports, native extension issues), and
-that's much cheaper to catch and fix locally than through a CI matrix
-rebuild-and-wait loop.
+`.github/workflows/release.yml` does this for every platform of the release
+matrix:
 
-## How this plugs into the Tauri build — not fully wired yet
+1. fetches the upstream oikb source if `oikb-main/` isn't there,
+2. runs `build.sh` / `build.ps1` (with Python 3.12),
+3. copies `dist/oikb[.exe]` to
+   `apps/desktop/src-tauri/binaries/oikb-<target-triple>[.exe]`,
+4. smoke-tests it with `--help`,
+5. builds the app with `--config src-tauri/tauri.sidecar.conf.json`, which adds
+   `"externalBin": ["binaries/oikb"]`.
 
-`daemon_sidecar.rs`'s `spawn_daemon` already tries `app.shell().sidecar("oikb")`
-first and falls back to the dev-mode `uv run oikb daemon` path if that spawn
-fails — so the Rust side is ready.
+The `externalBin` entry lives in `tauri.sidecar.conf.json` and not in
+`tauri.conf.json` on purpose: Tauri's build script checks that every
+`externalBin` file exists at build time, even for `cargo check` / `tauri dev`,
+which would break the normal development loop for everyone without a built
+binary.
 
-**What's deliberately not done yet:** adding `"externalBin": ["binaries/oikb"]`
-to `apps/desktop/src-tauri/tauri.conf.json`. Tauri's build script validates
-that every `externalBin` entry resolves to a real file *at build time* —
-including a plain `cargo check`/`tauri dev`, not just `tauri build` — so
-wiring it in before a real binary exists at
-`apps/desktop/src-tauri/binaries/oikb-<target-triple>[.exe]` would break the
-ordinary dev loop for everyone who doesn't already have one built. Do these
-together, not separately:
+`daemon_sidecar.rs`'s `spawn_daemon` tries `app.shell().sidecar("oikb")` first
+and falls back to the development path `uv run oikb daemon` if that spawn fails.
 
-1. Run `build.sh`/`build.ps1` (or a future `release.yml` step) to produce
-   `dist/oikb[.exe]`.
-2. Copy/rename it to
-   `apps/desktop/src-tauri/binaries/oikb-<target-triple>[.exe]` (get the
-   triple via `rustc -Vv | grep host`).
-3. Add the `externalBin` entry to `tauri.conf.json` in the same change.
-4. Only then wire an automated build+copy step into `release.yml`'s matrix,
-   once per platform.
+## To try it by hand
+
+Run a build once and exercise the binary — `./dist/oikb --help`, then a real
+`daemon` invocation against a test `.oikb.yaml` — before trusting a release.
+oikb's optional dependencies (`pymupdf`, `oci`, `google-api-python-client`, …)
+are exactly the kind of thing that can fail to freeze cleanly (missing hidden
+imports, native extension issues), and it is much cheaper to catch that locally
+than through a CI matrix rebuild. To use the result in a local app build, copy
+it to `apps/desktop/src-tauri/binaries/oikb-<target-triple>[.exe]` (the triple
+comes from `rustc -Vv | grep host`) and build with
+`npm run tauri build -- --config src-tauri/tauri.sidecar.conf.json`.

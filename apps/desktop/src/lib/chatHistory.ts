@@ -11,10 +11,20 @@ import Database from "@tauri-apps/plugin-sql";
 import type { ChatMessage } from "./openWebUiClient";
 import type { PendingAttachment } from "./attachments";
 import { getOpenWebUiConfig } from "./settingsStore";
+import { splitThinking } from "./reasoning";
+import {
+  ChatSettings,
+  normalizeParams,
+  parseFeatures,
+  parseParams,
+  serializeFeatures,
+  serializeParams,
+} from "./chatOptions";
+import type { ChatParams } from "./openWebUiClient";
 
 let dbPromise: Promise<Database> | null = null;
 
-function getDb(): Promise<Database> {
+export function getDb(): Promise<Database> {
   if (!dbPromise) {
     dbPromise = Database.load("sqlite:chat.db").catch((err) => {
       dbPromise = null;
@@ -44,7 +54,7 @@ export async function closeChatDb(): Promise<void> {
   await db.close();
 }
 
-async function currentAccountId(): Promise<string> {
+export async function currentAccountId(): Promise<string> {
   const config = await getOpenWebUiConfig();
   return config?.accountId ?? "unscoped";
 }
@@ -57,10 +67,31 @@ export interface Conversation {
   knowledge_ids: string | null; // JSON-encoded string[]; SQLite has no array type
   account_id: string | null;
   pinned: number; // SQLite has no boolean type; 0/1
-  unread: number; // personal bookmark/reminder flag, not real unread-tracking (single-user app)
+  // 1 = shown with the unread dot. Derived from the server's `last_read_at` by
+  // the sync; it stays read until the server's `updated_at` passes `unread_ack_at`.
+  unread: number;
   archived: number;
   group_id: string | null;
   openwebui_chat_id: string | null;
+  // Last activity (ms) — what the sidebar's time groups use. Null only for rows
+  // from before migration 10 that had no messages to derive it from.
+  updated_at: number | null;
+  // 1 while a local change (title, messages, pin, archive) hasn't reached the
+  // server yet; retried by the next `pullChats()`
+  dirty: number;
+  // 1 once deleted locally but the server delete still has to be retried
+  deleted_pending: number;
+  // The server's `updated_at` (ms) when this chat was last pulled
+  server_updated_at: number | null;
+  // 1 when the server has newer messages than the local copy
+  messages_stale: number;
+  // The server `updated_at` (ms) up to which the user has seen the chat here;
+  // 0 after "mark as unread"
+  unread_ack_at: number | null;
+  // JSON of the chat's settings (system prompt, temperature …), synced as chat.params
+  params: string | null;
+  // JSON of the feature switches / tools for the next reply; stays on this device
+  features: string | null;
 }
 
 // A folder in the sidebar. Mirrors Open WebUI's folder model (nesting, icon,
@@ -91,6 +122,28 @@ export interface StoredMessage {
   attachments: string | null; // JSON-encoded StoredAttachment[]
   vote: number | null; // -1, 0, or 1 — thumbs down/none/up feedback sent to Open WebUI
   openwebui_message_id: string | null; // set once this message's conversation has been shared
+  feedback_id: string | null; // Open WebUI feedback record behind `vote`
+  // The model's thinking, kept apart from `content` (the answer only)
+  reasoning: string | null;
+  reasoning_seconds: number | null;
+  // JSON of the retrieved documents, as Open WebUI sends and stores them
+  sources: string | null;
+}
+
+export interface MessageExtras {
+  reasoning?: string;
+  reasoningSeconds?: number;
+  sources?: unknown[];
+}
+
+export function parseSources(message: Pick<StoredMessage, "sources">): unknown[] {
+  if (!message.sources) return [];
+  try {
+    const parsed = JSON.parse(message.sources);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 export interface StoredAttachment {
@@ -110,11 +163,12 @@ export async function createConversation(
   groupId: string | null = null,
 ): Promise<Conversation> {
   const db = await getDb();
+  const now = Date.now();
   const conversation: Conversation = {
     id: newId(),
     title,
     model,
-    created_at: Date.now(),
+    created_at: now,
     knowledge_ids: knowledgeIds.length > 0 ? JSON.stringify(knowledgeIds) : null,
     account_id: await currentAccountId(),
     pinned: 0,
@@ -122,9 +176,17 @@ export async function createConversation(
     archived: 0,
     group_id: groupId,
     openwebui_chat_id: null,
+    updated_at: now,
+    dirty: 0,
+    deleted_pending: 0,
+    server_updated_at: null,
+    messages_stale: 0,
+    unread_ack_at: null,
+    params: null,
+    features: null,
   };
   await db.execute(
-    "INSERT INTO conversations (id, title, model, created_at, knowledge_ids, account_id, group_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    "INSERT INTO conversations (id, title, model, created_at, knowledge_ids, account_id, group_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     [
       conversation.id,
       conversation.title,
@@ -133,6 +195,7 @@ export async function createConversation(
       conversation.knowledge_ids,
       conversation.account_id,
       conversation.group_id,
+      conversation.updated_at,
     ],
   );
   return conversation;
@@ -140,17 +203,386 @@ export async function createConversation(
 
 export async function renameConversation(id: string, title: string): Promise<void> {
   const db = await getDb();
-  await db.execute("UPDATE conversations SET title = $1 WHERE id = $2", [title, id]);
+  await db.execute("UPDATE conversations SET title = $1, updated_at = $2 WHERE id = $3", [title, Date.now(), id]);
+}
+
+export async function setConversationDirty(id: string, dirty: boolean): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE conversations SET dirty = $1 WHERE id = $2", [dirty ? 1 : 0, id]);
+}
+
+// Hides a conversation whose server copy couldn't be deleted yet; the next
+// `pullChats()` retries the delete and then removes the row for good.
+export async function markConversationDeletePending(id: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE conversations SET deleted_pending = 1 WHERE id = $1", [id]);
+}
+
+// Every conversation of the current account including the ones awaiting a
+// server delete — what the sync needs; the sidebar uses `listConversations`.
+export async function listConversationsForSync(): Promise<Conversation[]> {
+  const db = await getDb();
+  const accountId = await currentAccountId();
+  return db.select<Conversation[]>("SELECT * FROM conversations WHERE account_id = $1", [accountId]);
+}
+
+export interface ServerChatFields {
+  title: string;
+  updated_at: number;
+  pinned?: boolean; // undefined = the server didn't say, keep the local value
+  archived?: boolean;
+  // undefined = unknown, keep the local folder; null = unfiled
+  group_id?: string | null;
+  unread?: boolean; // undefined = the server didn't say, keep the local value
+}
+
+// A conversation that so far only exists on the server. Its messages are
+// fetched the first time it is opened (`messages_stale = 1`).
+export async function createConversationFromServer(
+  chatId: string,
+  model: string,
+  createdAt: number,
+  fields: ServerChatFields,
+): Promise<Conversation> {
+  const db = await getDb();
+  const conversation: Conversation = {
+    id: newId(),
+    title: fields.title,
+    model,
+    created_at: createdAt || fields.updated_at,
+    knowledge_ids: null,
+    account_id: await currentAccountId(),
+    pinned: fields.pinned ? 1 : 0,
+    unread: fields.unread ? 1 : 0,
+    archived: fields.archived ? 1 : 0,
+    group_id: fields.group_id ?? null,
+    openwebui_chat_id: chatId,
+    updated_at: fields.updated_at,
+    dirty: 0,
+    deleted_pending: 0,
+    server_updated_at: fields.updated_at,
+    messages_stale: 1,
+    unread_ack_at: null,
+    params: null,
+    features: null,
+  };
+  await db.execute(
+    `INSERT INTO conversations (id, title, model, created_at, knowledge_ids, account_id, pinned, archived, group_id,
+                                openwebui_chat_id, updated_at, server_updated_at, messages_stale, unread)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+    [
+      conversation.id,
+      conversation.title,
+      conversation.model,
+      conversation.created_at,
+      conversation.knowledge_ids,
+      conversation.account_id,
+      conversation.pinned,
+      conversation.archived,
+      conversation.group_id,
+      conversation.openwebui_chat_id,
+      conversation.updated_at,
+      conversation.server_updated_at,
+      conversation.messages_stale,
+      conversation.unread,
+    ],
+  );
+  return conversation;
+}
+
+// Overwrites a conversation's synced fields with the server's (the pull in
+// chatSync.ts); does not touch `dirty`. `stale` marks the messages for a refetch.
+export async function applyServerChatFields(id: string, fields: ServerChatFields, stale: boolean): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    "UPDATE conversations SET title = $1, updated_at = $2, server_updated_at = $2, messages_stale = MAX(messages_stale, $3) WHERE id = $4",
+    [fields.title, fields.updated_at, stale ? 1 : 0, id],
+  );
+  if (fields.pinned !== undefined) {
+    await db.execute("UPDATE conversations SET pinned = $1 WHERE id = $2", [fields.pinned ? 1 : 0, id]);
+  }
+  if (fields.archived !== undefined) {
+    await db.execute("UPDATE conversations SET archived = $1 WHERE id = $2", [fields.archived ? 1 : 0, id]);
+  }
+  if (fields.group_id !== undefined) {
+    await db.execute("UPDATE conversations SET group_id = $1 WHERE id = $2", [fields.group_id, id]);
+  }
+  if (fields.unread !== undefined) {
+    await db.execute("UPDATE conversations SET unread = $1 WHERE id = $2", [fields.unread ? 1 : 0, id]);
+  }
+}
+
+// Records that the server now holds this conversation's current state. With
+// `seen` the user is looking at this version (they just wrote it), so it
+// doesn't count as unread.
+export async function setConversationServerUpdatedAt(
+  id: string,
+  serverUpdatedAt: number,
+  seen = false,
+): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE conversations SET server_updated_at = $1 WHERE id = $2", [serverUpdatedAt, id]);
+  if (seen) {
+    await db.execute("UPDATE conversations SET unread = 0, unread_ack_at = $1 WHERE id = $2", [serverUpdatedAt, id]);
+  }
+}
+
+// The user has opened the chat: clears the unread dot and remembers up to which
+// server version. Returns whether anything changed.
+export async function acknowledgeConversation(id: string): Promise<boolean> {
+  const db = await getDb();
+  const rows = await db.select<Conversation[]>("SELECT * FROM conversations WHERE id = $1", [id]);
+  const c = rows[0];
+  if (!c) return false;
+  const seenAt = c.server_updated_at ?? c.updated_at ?? 0;
+  if (!c.unread && (c.unread_ack_at ?? 0) >= seenAt) return false;
+  await db.execute("UPDATE conversations SET unread = 0, unread_ack_at = $1 WHERE id = $2", [seenAt, id]);
+  return true;
+}
+
+// "Mark as unread" after the server accepted it: unread until the user opens it again.
+export async function markConversationUnread(id: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE conversations SET unread = 1, unread_ack_at = 0 WHERE id = $1", [id]);
+}
+
+export interface ServerMessageRow {
+  id: string;
+  role: string;
+  content: string;
+  timestamp: number;
+  rating: number | null; // the server's thumbs (1 / -1); null = not rated
+  feedbackId: string | null;
+  files: { id: string; name: string; mime: string }[];
+  sources?: unknown[] | null;
+}
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: "application/pdf",
+  txt: "text/plain",
+  md: "text/markdown",
+  csv: "text/csv",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+// The server doesn't always say what kind of file an attachment is.
+export function guessMimeType(filename: string, given?: string): string {
+  if (given) return given;
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  return MIME_BY_EXTENSION[ext] ?? "application/octet-stream";
+}
+
+function attachmentsFromServer(files: ServerMessageRow["files"]): string | null {
+  if (files.length === 0) return null;
+  const stored: StoredAttachment[] = files.map((f) => ({
+    filename: f.name,
+    openWebUiFileId: f.id,
+    mimeType: guessMimeType(f.name, f.mime),
+  }));
+  return JSON.stringify(stored);
+}
+
+// Brings a conversation's messages in line with the server's copy and clears
+// the stale flag. Messages the server already knows by id keep their local row
+// (tokens, attachments, vote); new ones are inserted tagged with their server
+// message id, and local ones the server no longer has are dropped.
+export async function replaceMessagesFromServer(
+  conversationId: string,
+  messages: ServerMessageRow[],
+  model: string | null,
+): Promise<void> {
+  const db = await getDb();
+  const existing = await db.select<StoredMessage[]>("SELECT * FROM messages WHERE conversation_id = $1", [
+    conversationId,
+  ]);
+  const byServerId = new Map(existing.filter((m) => m.openwebui_message_id).map((m) => [m.openwebui_message_id!, m]));
+  const keep = new Set<string>();
+  let last = 0;
+  for (const m of messages) {
+    // Keep created_at strictly increasing: `getMessages` orders by it.
+    last = Math.max(m.timestamp || 0, last + 1);
+    const match = byServerId.get(m.id);
+    // The server decides rating and attachments; without any it leaves a local
+    // attachment list alone (the app's own uploads reach the server with the next push).
+    const serverAttachments = attachmentsFromServer(m.files);
+    // The server keeps the thinking inside the text; here it is a field of its own.
+    const split = splitThinking(m.content);
+    const reasoning = split.reasoning || null;
+    const serverSources = m.sources?.length ? JSON.stringify(m.sources) : null;
+    if (match) {
+      keep.add(match.id);
+      if (match.content !== split.content || match.role !== m.role || (match.reasoning ?? null) !== reasoning) {
+        await db.execute(
+          "UPDATE messages SET content = $1, role = $2, reasoning = $3, reasoning_seconds = $4 WHERE id = $5",
+          [split.content, m.role, reasoning, reasoning ? (split.seconds ?? match.reasoning_seconds ?? null) : null, match.id],
+        );
+      }
+      if (serverSources && serverSources !== match.sources) {
+        await db.execute("UPDATE messages SET sources = $1 WHERE id = $2", [serverSources, match.id]);
+      }
+      if ((match.vote ?? null) !== m.rating || (match.feedback_id ?? null) !== m.feedbackId) {
+        await db.execute("UPDATE messages SET vote = $1, feedback_id = $2 WHERE id = $3", [
+          m.rating,
+          m.feedbackId,
+          match.id,
+        ]);
+      }
+      if (serverAttachments && serverAttachments !== match.attachments) {
+        await db.execute("UPDATE messages SET attachments = $1 WHERE id = $2", [serverAttachments, match.id]);
+      }
+      last = Math.max(last, match.created_at);
+      continue;
+    }
+    const id = newId();
+    keep.add(id);
+    await db.execute(
+      `INSERT INTO messages (id, conversation_id, role, content, created_at, openwebui_message_id, vote, feedback_id, attachments,
+                             reasoning, reasoning_seconds, sources)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [
+        id,
+        conversationId,
+        m.role,
+        split.content,
+        last,
+        m.id,
+        m.rating,
+        m.feedbackId,
+        serverAttachments,
+        reasoning,
+        reasoning ? (split.seconds ?? null) : null,
+        serverSources,
+      ],
+    );
+  }
+  for (const m of existing) {
+    if (!keep.has(m.id)) await db.execute("DELETE FROM messages WHERE id = $1", [m.id]);
+  }
+  await db.execute("UPDATE conversations SET messages_stale = 0 WHERE id = $1", [conversationId]);
+  if (model) await db.execute("UPDATE conversations SET model = $1 WHERE id = $2", [model, conversationId]);
+}
+
+// A chat's settings. The sampling parameters and system prompt are part of the
+// server chat, so a change on a chat that exists there is queued for the next
+// push; the feature switches only matter on this device.
+export async function setChatSettings(id: string, settings: ChatSettings): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE conversations SET params = $1, features = $2 WHERE id = $3", [
+    serializeParams(settings.params),
+    serializeFeatures(settings.features),
+    id,
+  ]);
+  await db.execute("UPDATE conversations SET dirty = 1 WHERE id = $1 AND openwebui_chat_id IS NOT NULL", [id]);
+}
+
+export function chatSettingsOf(conversation: Pick<Conversation, "params" | "features">): ChatSettings {
+  return { params: parseParams(conversation.params), features: parseFeatures(conversation.features) };
+}
+
+// The server's settings for a chat (the pull); the feature switches are left alone.
+export async function setConversationParamsFromServer(id: string, params: ChatParams): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE conversations SET params = $1 WHERE id = $2", [serializeParams(normalizeParams(params)), id]);
 }
 
 export async function setConversationKnowledge(id: string, knowledgeIds: string[]): Promise<void> {
   const db = await getDb();
   const value = knowledgeIds.length > 0 ? JSON.stringify(knowledgeIds) : null;
   await db.execute("UPDATE conversations SET knowledge_ids = $1 WHERE id = $2", [value, id]);
+  // On the server the knowledge bases live in the chat itself: queue the change.
+  await db.execute("UPDATE conversations SET dirty = 1 WHERE id = $1 AND openwebui_chat_id IS NOT NULL", [id]);
+}
+
+// The server's knowledge bases for a chat (the pull); does not queue a push.
+export async function setConversationKnowledgeFromServer(id: string, knowledgeIds: string[]): Promise<void> {
+  const db = await getDb();
+  const value = knowledgeIds.length > 0 ? JSON.stringify(knowledgeIds) : null;
+  await db.execute("UPDATE conversations SET knowledge_ids = $1 WHERE id = $2", [value, id]);
+}
+
+// Tags are kept as Open WebUI's tag ids: lower-case, underscores for spaces.
+export function tagId(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+export function tagLabel(id: string): string {
+  return id.replace(/_/g, " ");
+}
+
+export async function listConversationTags(): Promise<Map<string, string[]>> {
+  const db = await getDb();
+  const accountId = await currentAccountId();
+  const rows = await db.select<{ conversation_id: string; tag: string }[]>(
+    `SELECT t.conversation_id, t.tag FROM conversation_tags t
+     JOIN conversations c ON c.id = t.conversation_id
+     WHERE c.account_id = $1 ORDER BY t.tag`,
+    [accountId],
+  );
+  const byConversation = new Map<string, string[]>();
+  for (const row of rows) {
+    const tags = byConversation.get(row.conversation_id) ?? [];
+    tags.push(row.tag);
+    byConversation.set(row.conversation_id, tags);
+  }
+  return byConversation;
+}
+
+// Replaces a conversation's tags (the server's list, or the result of a change
+// the server accepted).
+export async function setConversationTags(id: string, tags: string[]): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM conversation_tags WHERE conversation_id = $1", [id]);
+  for (const tag of new Set(tags.map(tagId).filter(Boolean))) {
+    await db.execute("INSERT INTO conversation_tags (conversation_id, tag) VALUES ($1, $2)", [id, tag]);
+  }
+}
+
+export interface MessageHit {
+  conversationId: string;
+  snippet: string;
+}
+
+// Searches message texts of the cloned chats, newest matches first, one hit per
+// conversation. Runs on the local copy, so it also works offline. SQLite's
+// lower() only folds ASCII letters, so umlaut capitals match case-sensitively.
+export async function searchMessages(query: string, limit = 200): Promise<MessageHit[]> {
+  const needle = query.trim();
+  if (needle.length < 2) return [];
+  const db = await getDb();
+  const accountId = await currentAccountId();
+  const rows = await db.select<{ conversation_id: string; content: string }[]>(
+    `SELECT m.conversation_id, m.content FROM messages m
+     JOIN conversations c ON c.id = m.conversation_id
+     WHERE c.account_id = $1 AND c.deleted_pending = 0 AND instr(lower(m.content), lower($2)) > 0
+     ORDER BY m.created_at DESC LIMIT $3`,
+    [accountId, needle, limit],
+  );
+  const hits = new Map<string, MessageHit>();
+  for (const row of rows) {
+    if (hits.has(row.conversation_id)) continue;
+    hits.set(row.conversation_id, { conversationId: row.conversation_id, snippet: snippetAround(row.content, needle) });
+  }
+  return [...hits.values()];
+}
+
+// A short excerpt of `text` around the first occurrence of `needle`.
+export function snippetAround(text: string, needle: string, radius = 40): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  const at = flat.toLowerCase().indexOf(needle.toLowerCase());
+  if (at < 0) return flat.slice(0, radius * 2);
+  const start = Math.max(0, at - radius);
+  const end = Math.min(flat.length, at + needle.length + radius);
+  return `${start > 0 ? "…" : ""}${flat.slice(start, end)}${end < flat.length ? "…" : ""}`;
 }
 
 export async function deleteConversation(id: string): Promise<void> {
   const db = await getDb();
+  await db.execute("DELETE FROM conversation_tags WHERE conversation_id = $1", [id]);
   await db.execute("DELETE FROM messages WHERE conversation_id = $1", [id]);
   await db.execute("DELETE FROM conversations WHERE id = $1", [id]);
 }
@@ -349,11 +781,14 @@ export function parseAttachments(message: Pick<StoredMessage, "attachments">): S
   }
 }
 
-export async function listConversations(limit = 50): Promise<Conversation[]> {
+// The sidebar shows every chat in time groups, so the default is generous
+// rather than a "recent 50" cut-off.
+export async function listConversations(limit = 5000): Promise<Conversation[]> {
   const db = await getDb();
   const accountId = await currentAccountId();
   return db.select<Conversation[]>(
-    "SELECT * FROM conversations WHERE account_id = $1 ORDER BY created_at DESC LIMIT $2",
+    `SELECT * FROM conversations WHERE account_id = $1 AND deleted_pending = 0
+     ORDER BY COALESCE(updated_at, created_at) DESC LIMIT $2`,
     [accountId, limit],
   );
 }
@@ -364,11 +799,24 @@ export async function getConversation(id: string): Promise<Conversation | null> 
   return rows[0] ?? null;
 }
 
+// A conversation by its local id or by its Open WebUI chat id (what links carry,
+// since that id is the same on every device).
+export async function findConversationByAnyId(id: string): Promise<Conversation | null> {
+  const db = await getDb();
+  const accountId = await currentAccountId();
+  const rows = await db.select<Conversation[]>(
+    `SELECT * FROM conversations
+     WHERE account_id = $1 AND deleted_pending = 0 AND (id = $2 OR openwebui_chat_id = $2) LIMIT 1`,
+    [accountId, id],
+  );
+  return rows[0] ?? null;
+}
+
 export async function getLatestConversation(): Promise<Conversation | null> {
   const db = await getDb();
   const accountId = await currentAccountId();
   const rows = await db.select<Conversation[]>(
-    "SELECT * FROM conversations WHERE account_id = $1 ORDER BY created_at DESC LIMIT 1",
+    "SELECT * FROM conversations WHERE account_id = $1 AND deleted_pending = 0 ORDER BY created_at DESC LIMIT 1",
     [accountId],
   );
   return rows[0] ?? null;
@@ -387,6 +835,7 @@ export async function addMessage(
   message: ChatMessage,
   tokens?: number,
   attachments?: PendingAttachment[],
+  extras?: MessageExtras,
 ): Promise<StoredMessage> {
   const db = await getDb();
   const attachmentsJson = attachments?.length
@@ -408,9 +857,14 @@ export async function addMessage(
     attachments: attachmentsJson,
     vote: null,
     openwebui_message_id: null,
+    feedback_id: null,
+    reasoning: extras?.reasoning?.trim() ? extras.reasoning : null,
+    reasoning_seconds: extras?.reasoning?.trim() ? (extras.reasoningSeconds ?? null) : null,
+    sources: extras?.sources?.length ? JSON.stringify(extras.sources) : null,
   };
   await db.execute(
-    "INSERT INTO messages (id, conversation_id, role, content, created_at, tokens, attachments) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    `INSERT INTO messages (id, conversation_id, role, content, created_at, tokens, attachments, reasoning, reasoning_seconds, sources)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
       stored.id,
       stored.conversation_id,
@@ -419,7 +873,16 @@ export async function addMessage(
       stored.created_at,
       stored.tokens,
       stored.attachments,
+      stored.reasoning,
+      stored.reasoning_seconds,
+      stored.sources,
     ],
+  );
+  // New activity moves the chat to "Today" and, if it already lives on the
+  // server, queues the new message for the next sync.
+  await db.execute(
+    "UPDATE conversations SET updated_at = $1, dirty = CASE WHEN openwebui_chat_id IS NULL THEN dirty ELSE 1 END WHERE id = $2",
+    [stored.created_at, conversationId],
   );
   return stored;
 }
@@ -432,11 +895,27 @@ export async function updateMessageTokens(id: string, tokens: number): Promise<v
 export async function updateMessageContent(id: string, content: string): Promise<void> {
   const db = await getDb();
   await db.execute("UPDATE messages SET content = $1 WHERE id = $2", [content, id]);
+  await db.execute(
+    `UPDATE conversations SET dirty = 1
+     WHERE openwebui_chat_id IS NOT NULL AND id = (SELECT conversation_id FROM messages WHERE id = $1)`,
+    [id],
+  );
 }
 
 export async function updateMessageVote(id: string, vote: number): Promise<void> {
   const db = await getDb();
   await db.execute("UPDATE messages SET vote = $1 WHERE id = $2", [vote, id]);
+}
+
+export async function setMessageFeedbackId(id: string, feedbackId: string | null): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE messages SET feedback_id = $1 WHERE id = $2", [feedbackId, id]);
+}
+
+// Queues a chat's messages / ratings / knowledge for the next push to the server.
+export async function markConversationDirty(id: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE conversations SET dirty = 1 WHERE id = $1 AND openwebui_chat_id IS NOT NULL", [id]);
 }
 
 export async function setMessageOpenWebUiId(id: string, openWebUiMessageId: string): Promise<void> {
@@ -455,6 +934,9 @@ export async function deleteMessagesFrom(conversationId: string, fromCreatedAt: 
   await db.execute("DELETE FROM messages WHERE conversation_id = $1 AND created_at >= $2", [
     conversationId,
     fromCreatedAt,
+  ]);
+  await db.execute("UPDATE conversations SET dirty = 1 WHERE id = $1 AND openwebui_chat_id IS NOT NULL", [
+    conversationId,
   ]);
 }
 
@@ -526,6 +1008,10 @@ export interface DailyActivity {
 export async function clearHistory(): Promise<void> {
   const db = await getDb();
   const accountId = await currentAccountId();
+  await db.execute(
+    "DELETE FROM conversation_tags WHERE conversation_id IN (SELECT id FROM conversations WHERE account_id = $1)",
+    [accountId],
+  );
   await db.execute(
     "DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE account_id = $1)",
     [accountId],

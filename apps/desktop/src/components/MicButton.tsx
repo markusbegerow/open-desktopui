@@ -235,7 +235,7 @@ export default function MicButton({ baseUrl, apiKey, onResult, onError }: MicBut
   return (
     <button
       type="button"
-      className={`mic-button${recording ? " active" : ""}`}
+      className={`composer-icon-button mic-button${recording ? " active" : ""}`}
       onClick={handleClick}
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
@@ -249,7 +249,16 @@ export default function MicButton({ baseUrl, apiKey, onResult, onError }: MicBut
             : t("composer.micSpeak"))
       }
     >
-      {busy ? "⏺" : "🎤"}
+      {busy ? (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+          <circle cx="12" cy="12" r="6" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="12" rx="3" />
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3" strokeLinecap="round" />
+        </svg>
+      )}
     </button>
   );
 }

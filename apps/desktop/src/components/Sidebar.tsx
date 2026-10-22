@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
+import { Icon } from "./SidebarIcons";
+import { FOCUS_SEARCH_EVENT } from "../lib/shortcuts";
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -7,15 +9,26 @@ import ConversationMenu from "./ConversationMenu";
 import {
   Conversation,
   Group,
-  deleteConversation,
   getMessages,
+  listConversationTags,
   listConversations,
   listGroups,
-  renameConversation,
-  setConversationArchived,
-  setConversationPinned,
-  setConversationUnread,
+  searchMessages,
+  tagLabel,
 } from "../lib/chatHistory";
+import {
+  CloneProgress,
+  addChatTag,
+  deleteChat,
+  removeChatTag,
+  renameChat,
+  setChatArchived,
+  setChatPinned,
+  setChatUnread,
+  subscribeCloneProgress,
+} from "../lib/chatSync";
+import { ChatDateGroup, activityTime, groupByDate, toggleSection } from "../lib/chatGroups";
+import { relativeTimeParts } from "../lib/relativeTime";
 import { getAppPrefs, setAppPrefs } from "../lib/settingsStore";
 import { ensureSharedChat } from "../lib/openWebUiSync";
 import { useTranslation } from "../lib/i18n";
@@ -31,8 +44,10 @@ import {
 } from "../lib/folderSync";
 import FolderDialog from "./FolderDialog";
 import FolderMenu from "./FolderMenu";
+import TagFilter from "./TagFilter";
+import TagPicker from "./TagPicker";
 
-export type View = "home" | "chat" | "settings";
+export type View = "home" | "chat" | "notes" | "settings";
 
 export interface SidebarProps {
   view: View;
@@ -41,7 +56,16 @@ export interface SidebarProps {
   onNewChatInFolder: (folder: { id: string; name: string }) => void;
   onSelectConversation: (id: string) => void;
   onSelectView: (view: View) => void;
+  /** The notes panel is open next to the chat. */
+  notesOpen: boolean;
   refreshKey: number;
+  // false while Open WebUI can't be reached: chats are then shown from the local clone
+  online?: boolean;
+  // when the last successful sync finished (ms)
+  lastSyncAt?: number | null;
+  // a newer release exists (its version); clicking the hint opens the update page
+  updateVersion?: string | null;
+  onShowUpdate?: () => void;
 }
 
 export default function Sidebar({
@@ -51,9 +75,16 @@ export default function Sidebar({
   onNewChatInFolder,
   onSelectConversation,
   onSelectView,
+  notesOpen,
   refreshKey,
+  online = true,
+  lastSyncAt = null,
+  updateVersion = null,
+  onShowUpdate,
 }: SidebarProps) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const [cloneProgress, setCloneProgress] = useState<CloneProgress | null>(null);
+  useEffect(() => subscribeCloneProgress(setCloneProgress), []);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [displayName, setDisplayName] = useState<string | undefined>(undefined);
@@ -62,7 +93,6 @@ export default function Sidebar({
   const [search, setSearch] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [showArchived, setShowArchived] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
@@ -70,16 +100,66 @@ export default function Sidebar({
     { mode: "create"; parentId: string | null } | { mode: "edit"; group: Group } | null
   >(null);
   const [pendingDeleteFolder, setPendingDeleteFolder] = useState<Group | null>(null);
+  const [tagsByConversation, setTagsByConversation] = useState<Map<string, string[]>>(new Map());
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [bodyHits, setBodyHits] = useState<Map<string, string>>(new Map());
+  const [tagDialog, setTagDialog] = useState<Conversation | null>(null);
+  // Where the last click happened: the tag dropdown opens there.
+  const lastPointer = useRef({ x: 0, y: 0 });
+  const [tagAnchor, setTagAnchor] = useState({ x: 0, y: 0 });
+  useEffect(() => {
+    const track = (e: MouseEvent) => {
+      lastPointer.current = { x: e.clientX, y: e.clientY };
+    };
+    window.addEventListener("mousedown", track, true);
+    return () => window.removeEventListener("mousedown", track, true);
+  }, []);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [foldedSections, setFoldedSections] = useState<string[]>([]);
+
+  useEffect(() => {
+    getAppPrefs().then((prefs) => setFoldedSections(prefs?.collapsedSections ?? ["archived"]));
+  }, []);
+
+  function toggleFolded(key: string) {
+    const next = toggleSection(foldedSections, key);
+    setFoldedSections(next);
+    void setAppPrefs({ collapsedSections: next });
+  }
 
   function refresh() {
     listConversations().then(setConversations);
     listGroups().then(setGroups);
+    listConversationTags().then(setTagsByConversation);
   }
 
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
+
+  // Message-text search runs on the local clone; a short pause after typing keeps it cheap.
+  useEffect(() => {
+    const text = search.trim();
+    if (text.length < 2) {
+      setBodyHits(new Map());
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      searchMessages(text)
+        .then((hits) => {
+          if (!cancelled) setBodyHits(new Map(hits.map((h) => [h.conversationId, h.snippet])));
+        })
+        .catch(() => {
+          // the title / tag search still works
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [search, refreshKey]);
 
   useEffect(() => {
     getAppPrefs().then((prefs) => {
@@ -93,21 +173,57 @@ export default function Sidebar({
     getAppPrefs().then((prefs) => setCollapsed(prefs?.sidebarCollapsed ?? false));
   }, []);
 
+  // Ctrl/Cmd+K: open the sidebar if needed and focus the search box.
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [focusSearchPending, setFocusSearchPending] = useState(false);
+  useEffect(() => {
+    function onFocusSearch() {
+      if (collapsed) {
+        setCollapsed(false);
+        void setAppPrefs({ sidebarCollapsed: false });
+      }
+      setSearchOpen(true);
+      setFocusSearchPending(true);
+    }
+    window.addEventListener(FOCUS_SEARCH_EVENT, onFocusSearch);
+    return () => window.removeEventListener(FOCUS_SEARCH_EVENT, onFocusSearch);
+  }, [collapsed]);
+  useEffect(() => {
+    if (!focusSearchPending || collapsed) return;
+    // the box only exists once the search is open; wait for the next render
+    if (!searchRef.current) return;
+    searchRef.current.focus();
+    searchRef.current.select();
+    setFocusSearchPending(false);
+  }, [focusSearchPending, collapsed, searchOpen]);
+
   async function toggleCollapsed() {
     const next = !collapsed;
     setCollapsed(next);
     await setAppPrefs({ sidebarCollapsed: next });
   }
 
-  const filtered = conversations.filter((c) =>
-    (c.title || "New conversation").toLowerCase().includes(search.trim().toLowerCase()),
+  // A search matches titles, tags and — through the local clone — message texts.
+  const query = search.trim().toLowerCase();
+  const matchesTitle = (c: Conversation) => (c.title || "New conversation").toLowerCase().includes(query);
+  const matchesTag = (c: Conversation) => (tagsByConversation.get(c.id) ?? []).some((tag) => tagLabel(tag).includes(query));
+  const filtered = conversations.filter(
+    (c) =>
+      (tagFilter === null || (tagsByConversation.get(c.id) ?? []).includes(tagFilter)) &&
+      (query === "" || matchesTitle(c) || matchesTag(c) || bodyHits.has(c.id)),
   );
+  const allTags = [...new Set([...tagsByConversation.values()].flat())].sort();
+  const tagCounts = new Map<string, number>();
+  for (const list of tagsByConversation.values()) for (const tag of list) tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
 
   const pinned = filtered.filter((c) => c.pinned && !c.archived);
   const archived = filtered.filter((c) => c.archived);
   const ungrouped = filtered.filter((c) => !c.pinned && !c.archived && !c.group_id);
+  const dateGroups = groupByDate(ungrouped);
   const folderTree = buildFolderTree(groups);
-  const searching = search.trim() !== "";
+  const searching = query !== "" || tagFilter !== null;
+  // A fold hides a section's chats, except while searching so no hit stays hidden.
+  const isOpen = (key: string) => searching || !foldedSections.includes(key);
   const folderItems = (id: string) => filtered.filter((c) => !c.pinned && !c.archived && c.group_id === id);
   // While searching, hide folders (and their parents) that contain no match.
   const folderHasMatch = (node: FolderNode): boolean =>
@@ -121,13 +237,27 @@ export default function Sidebar({
   }
 
   async function handleTogglePin(c: Conversation) {
-    await setConversationPinned(c.id, !c.pinned);
+    const outcome = await setChatPinned(c, !c.pinned);
     refresh();
+    reportChatAction(outcome);
+  }
+
+  async function handleAddTag(c: Conversation, name: string) {
+    const outcome = await addChatTag(c, name);
+    refresh();
+    reportChatAction(outcome);
+  }
+
+  async function handleRemoveTag(c: Conversation, tag: string) {
+    const outcome = await removeChatTag(c, tag);
+    refresh();
+    reportChatAction(outcome);
   }
 
   async function handleToggleUnread(c: Conversation) {
-    await setConversationUnread(c.id, !c.unread);
+    const outcome = await setChatUnread(c, !c.unread);
     refresh();
+    reportChatAction(outcome);
   }
 
   function handleStartRename(c: Conversation) {
@@ -136,16 +266,25 @@ export default function Sidebar({
   }
 
   async function commitRename() {
-    if (renamingId && renameValue.trim()) {
-      await renameConversation(renamingId, renameValue.trim());
-    }
+    const target = conversations.find((c) => c.id === renamingId);
     setRenamingId(null);
+    if (target && renameValue.trim()) {
+      const outcome = await renameChat(target, renameValue.trim());
+      reportChatAction(outcome);
+    }
     refresh();
   }
 
   function reportSync(outcome: SyncOutcome) {
     if (outcome.synced) return;
     setShareStatus(`${t("folders.syncFailed")}${outcome.error ? `: ${outcome.error}` : ""}`);
+    setTimeout(() => setShareStatus(null), 5000);
+  }
+
+  // Chat changes go to the server first; a failure means nothing was changed.
+  function reportChatAction(outcome: SyncOutcome) {
+    if (outcome.synced) return;
+    setShareStatus(`${t("sidebar.actionFailed")}${outcome.error ? `: ${outcome.error}` : ""}`);
     setTimeout(() => setShareStatus(null), 5000);
   }
 
@@ -198,11 +337,12 @@ export default function Sidebar({
 
   async function handleToggleArchive(c: Conversation) {
     const willArchive = !c.archived;
-    await setConversationArchived(c.id, willArchive);
-    if (willArchive && view === "chat" && activeConversationId === c.id) {
+    const outcome = await setChatArchived(c, willArchive);
+    if (outcome.synced && willArchive && view === "chat" && activeConversationId === c.id) {
       onNewChat();
     }
     refresh();
+    reportChatAction(outcome);
   }
 
   async function handleOpenInOpenWebUi(c: Conversation) {
@@ -225,6 +365,21 @@ export default function Sidebar({
       refresh();
       await navigator.clipboard.writeText(url);
       setShareStatus("Link copied");
+    } catch (err) {
+      setShareStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTimeout(() => setShareStatus(null), 4000);
+    }
+  }
+
+  // opendesktopui://chat/<id> opens the chat in this app on any device that has
+  // the same account; the server's chat id is what they share.
+  async function handleCopyAppLink(c: Conversation) {
+    try {
+      const { chatId } = await ensureSharedChat(c);
+      refresh();
+      await navigator.clipboard.writeText(`opendesktopui://chat/${chatId}`);
+      setShareStatus(t("sidebar.appLinkCopied"));
     } catch (err) {
       setShareStatus(err instanceof Error ? err.message : String(err));
     } finally {
@@ -264,11 +419,45 @@ export default function Sidebar({
     const c = pendingDelete;
     setPendingDelete(null);
     if (!c) return;
-    await deleteConversation(c.id);
-    if (view === "chat" && activeConversationId === c.id) {
+    const outcome = await deleteChat(c);
+    if (outcome.synced && view === "chat" && activeConversationId === c.id) {
       onNewChat();
     }
     refresh();
+    reportChatAction(outcome);
+  }
+
+  function dateGroupLabel(group: ChatDateGroup<Conversation>): string {
+    if (group.bucket === "month") {
+      return new Intl.DateTimeFormat(language, { month: "long", year: "numeric" }).format(group.monthStart);
+    }
+    return t(`sidebar.dateGroups.${group.bucket}`);
+  }
+
+  function relativeLabel(at: number): string {
+    const { unit, value } = relativeTimeParts(at);
+    const word = t(`sidebar.relative.${unit}`);
+    return unit === "now" ? word : `${value} ${word}`;
+  }
+
+  // A heading that folds the section below it.
+  function sectionHeader(key: string, label: string, extra?: ReactNode) {
+    const open = isOpen(key);
+    return (
+      <div className="sidebar-section-label">
+        <button
+          type="button"
+          className="section-toggle"
+          aria-expanded={open}
+          disabled={searching}
+          onClick={() => toggleFolded(key)}
+        >
+          <span className={`section-chevron${open ? " open" : ""}`} aria-hidden="true" />
+          <span>{label}</span>
+        </button>
+        {extra}
+      </div>
+    );
   }
 
   function renderConversation(c: Conversation) {
@@ -300,7 +489,11 @@ export default function Sidebar({
         >
           {c.unread ? <span className="conversation-unread-dot" /> : null}
           {c.title || "New conversation"}
+          {query !== "" && !matchesTitle(c) && bodyHits.get(c.id) && (
+            <span className="conversation-snippet">{bodyHits.get(c.id)}</span>
+          )}
         </button>
+        <span className="conversation-time">{relativeLabel(activityTime(c))}</span>
         <ConversationMenu
           conversation={c}
           groups={groups}
@@ -308,12 +501,17 @@ export default function Sidebar({
           onTogglePin={() => handleTogglePin(c)}
           onToggleUnread={() => handleToggleUnread(c)}
           onRename={() => handleStartRename(c)}
+          onEditTags={() => {
+            setTagAnchor(lastPointer.current);
+            setTagDialog(c);
+          }}
           onMoveToGroup={(groupId) => handleMoveToGroup(c, groupId)}
           onCreateGroupAndMove={(name) => handleCreateGroupAndMove(c, name)}
           onToggleArchive={() => handleToggleArchive(c)}
           onDelete={() => handleDelete(c)}
           onOpenInOpenWebUi={() => handleOpenInOpenWebUi(c)}
           onCopyLink={() => handleShareLink(c)}
+          onCopyAppLink={() => handleCopyAppLink(c)}
           onExport={() => handleExportConversation(c)}
         />
       </div>
@@ -335,7 +533,7 @@ export default function Sidebar({
             aria-expanded={expanded}
             title={group.system_prompt ? `${group.name} — ${t("folders.systemPrompt")}` : group.name}
           >
-            <span className="folder-chevron">{expanded ? "▾" : "▸"}</span>
+            <Icon name="folder" />
             <span className="folder-name">{group.name}</span>
           </button>
           <FolderMenu
@@ -349,6 +547,9 @@ export default function Sidebar({
           <>
             {node.children.map(renderFolder)}
             {items.length > 0 && <div className="conversation-list">{items.map(renderConversation)}</div>}
+            {items.length === 0 && node.children.length === 0 && (
+              <div className="folder-empty">{t("sidebar.noChats")}</div>
+            )}
           </>
         )}
       </div>
@@ -357,47 +558,99 @@ export default function Sidebar({
 
   return (
     <nav className={`sidebar${collapsed ? " collapsed" : ""}`}>
-      <button
-        className="sidebar-toggle"
-        type="button"
-        onClick={toggleCollapsed}
-        title={collapsed ? t("sidebar.expand") : t("sidebar.collapse")}
-      >
-        {collapsed ? "»" : "«"}
-      </button>
+      <div className="sidebar-header">
+        <span className="sidebar-brand">
+          <img className="sidebar-brand-logo" src="/logo.png" alt="" />
+          <span className="sidebar-brand-name">Open DesktopUI</span>
+        </span>
+        <button
+          className="sidebar-toggle"
+          type="button"
+          onClick={toggleCollapsed}
+          title={collapsed ? t("sidebar.expand") : t("sidebar.collapse")}
+        >
+          <Icon name="panel" size={18} />
+        </button>
+      </div>
       {collapsed && (
         <button className="sidebar-new-chat-collapsed" type="button" onClick={onNewChat} title={t("sidebar.newChat")}>
-          +
+          <Icon name="newChat" size={18} />
         </button>
       )}
       <div className="sidebar-scroll">
-        <input
-          type="text"
-          className="sidebar-search"
-          placeholder={t("sidebar.searchPlaceholder")}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+        <div className="sidebar-nav">
+          <button type="button" className="sidebar-nav-button" onClick={onNewChat}>
+            <Icon name="newChat" />
+            {t("sidebar.newChat")}
+          </button>
+          <button
+            type="button"
+            className={`sidebar-nav-button${searchOpen || search !== "" ? " active" : ""}`}
+            onClick={() => {
+              setSearchOpen(true);
+              setFocusSearchPending(true);
+            }}
+          >
+            <Icon name="search" />
+            {t("sidebar.search")}
+          </button>
+          <button
+            type="button"
+            className={`sidebar-nav-button${notesOpen ? " active" : ""}`}
+            aria-pressed={notesOpen}
+            onClick={() => onSelectView("notes")}
+          >
+            <Icon name="notes" />
+            {t("notes.title")}
+          </button>
+        </div>
 
-        <button className="new-chat-button" onClick={onNewChat}>
-          {t("sidebar.newChat")}
-        </button>
+        {(searchOpen || search !== "") && (
+          <input
+            ref={searchRef}
+            type="text"
+            className="sidebar-search"
+            placeholder={t("sidebar.searchPlaceholder")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onBlur={() => {
+              if (search === "") setSearchOpen(false);
+            }}
+          />
+        )}
+
+        {allTags.length > 0 && (
+          <TagFilter tags={allTags} counts={tagCounts} selected={tagFilter} onSelect={setTagFilter} />
+        )}
 
         {filtered.length === 0 && search.trim() !== "" && (
           <p className="hint sidebar-search-empty">{t("sidebar.noMatches")}</p>
+        )}
+
+        {!online && (
+          <p className="hint sidebar-search-empty">
+            {t("sidebar.offline")}
+            {lastSyncAt ? ` · ${t("sidebar.lastSynced")} ${new Date(lastSyncAt).toLocaleTimeString(language)}` : ""}
+          </p>
+        )}
+        {online && cloneProgress && (
+          <p className="hint sidebar-search-empty">
+            {t("sidebar.syncing")} {cloneProgress.done}/{cloneProgress.total}
+          </p>
         )}
 
         {shareStatus && <p className="hint sidebar-search-empty">{shareStatus}</p>}
 
         {pinned.length > 0 && (
           <>
-            <div className="sidebar-section-label">{t("sidebar.pinned")}</div>
-            <div className="conversation-list">{pinned.map(renderConversation)}</div>
+            {sectionHeader("pinned", t("sidebar.pinned"))}
+            {isOpen("pinned") && <div className="conversation-list">{pinned.map(renderConversation)}</div>}
           </>
         )}
 
-        <div className="sidebar-section-label folder-section-label">
-          <span>{t("folders.title")}</span>
+        {sectionHeader(
+          "folders",
+          t("folders.title"),
           <button
             type="button"
             className="folder-add"
@@ -405,26 +658,32 @@ export default function Sidebar({
             onClick={() => setFolderDialog({ mode: "create", parentId: null })}
           >
             +
-          </button>
-        </div>
-        {folderTree.map(renderFolder)}
-
-        {ungrouped.length > 0 && (
-          <>
-            <div className="sidebar-section-label">{t("sidebar.recent")}</div>
-            <div className="conversation-list">{ungrouped.map(renderConversation)}</div>
-          </>
+          </button>,
         )}
+        {isOpen("folders") && folderTree.map(renderFolder)}
+
+        {(dateGroups.length > 0 || !searching) && sectionHeader("chats", t("sidebar.chats"))}
+        {isOpen("chats") &&
+          dateGroups.map((group) => (
+            <div key={group.key}>
+              <div className="sidebar-group-label">{dateGroupLabel(group)}</div>
+              <div className="conversation-list">{group.items.map(renderConversation)}</div>
+            </div>
+          ))}
 
         {archived.length > 0 && (
           <>
-            <button className="sidebar-archived-toggle" type="button" onClick={() => setShowArchived((v) => !v)}>
-              {showArchived ? "▾" : "▸"} {t("sidebar.archived")} ({archived.length})
-            </button>
-            {showArchived && <div className="conversation-list">{archived.map(renderConversation)}</div>}
+            {sectionHeader("archived", `${t("sidebar.archived")} (${archived.length})`)}
+            {isOpen("archived") && <div className="conversation-list">{archived.map(renderConversation)}</div>}
           </>
         )}
       </div>
+
+      {updateVersion && onShowUpdate && (
+        <button type="button" className="sidebar-update" onClick={onShowUpdate}>
+          ⬆ {t("updates.available")} {updateVersion}
+        </button>
+      )}
 
       <button
         className="sidebar-account"
@@ -447,6 +706,18 @@ export default function Sidebar({
           initialSystemPrompt={folderDialog.mode === "edit" ? (folderDialog.group.system_prompt ?? "") : ""}
           onSave={handleSaveFolder}
           onCancel={() => setFolderDialog(null)}
+        />
+      )}
+
+      {tagDialog && (
+        <TagPicker
+          title={tagDialog.title || "New conversation"}
+          allTags={allTags}
+          anchor={tagAnchor}
+          tags={tagsByConversation.get(tagDialog.id) ?? []}
+          onAdd={(name) => handleAddTag(tagDialog, name)}
+          onRemove={(tag) => handleRemoveTag(tagDialog, tag)}
+          onClose={() => setTagDialog(null)}
         />
       )}
 

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import AttachButton from "./AttachButton";
-import KnowledgePicker from "./KnowledgePicker";
 import MicButton from "./MicButton";
 import ModelPicker from "./ModelPicker";
 import ChatThread, { DisplayMessage } from "./ChatThread";
@@ -16,22 +15,41 @@ import {
   listModels,
   MessageFileRef,
   OpenWebUiModel,
+  openServerFile,
   rateOpenWebUiMessage,
   sendChatMessage,
   cancelChatMessage,
   uploadOpenWebUiFile,
 } from "../lib/openWebUiClient";
 import { ensureSharedChat } from "../lib/openWebUiSync";
-import { applyChatChunk, initialChunkAccumulator, ChunkAccumulator } from "../lib/chatCompletion";
+import { markChatRead, refreshChatMessages, setActiveChat } from "../lib/chatSync";
+import { autoTitle, generateChatTitle } from "../lib/chatTitle";
+import { applyChatChunk, finishMessage, initialChunkAccumulator, ChunkAccumulator } from "../lib/chatCompletion";
+import { splitThinking } from "../lib/reasoning";
+import ChatOptionsBar from "./ChatOptionsBar";
+import {
+  ChatSettings,
+  availableFeatures,
+  combinedSystemPrompt,
+  effectiveFeatures,
+  emptySettings,
+  toCompletionOptions,
+} from "../lib/chatOptions";
+import { useServerOptions } from "../lib/useServerOptions";
 import {
   addMessage,
+  chatSettingsOf,
   createConversation,
   deleteMessagesFrom,
   getConversation,
   getMessages,
+  markConversationDirty,
   parseAttachments,
   parseKnowledgeIds,
+  parseSources,
+  setChatSettings,
   setConversationKnowledge,
+  setMessageFeedbackId,
   updateMessageContent,
   updateMessageTokens,
   updateMessageVote,
@@ -62,12 +80,18 @@ async function notifyReplyIfEnabled(content: string) {
 export interface ChatViewProps {
   conversationId: string | null;
   onConversationCreated: (id: string) => void;
+  // A message was added: the chat moved to "Today" and needs syncing.
+  onConversationActivity?: () => void;
+  // Opening the chat cleared its unread dot: the sidebar should reload.
+  onChatRead?: () => void;
   initialMessage?: string | null;
   onInitialMessageConsumed?: () => void;
   initialModel?: string;
   // Folder to file a newly created conversation in ("new chat here").
   initialGroupId?: string | null;
   initialKnowledgeIds?: string[];
+  // Settings chosen on the home screen for the chat that is about to start.
+  initialSettings?: ChatSettings;
   initialAttachments?: PendingAttachment[];
   onInitialAttachmentsConsumed?: () => void;
   attachments: PendingAttachment[];
@@ -80,11 +104,14 @@ export interface ChatViewProps {
 export default function ChatView({
   conversationId,
   onConversationCreated,
+  onConversationActivity,
+  onChatRead,
   initialMessage,
   onInitialMessageConsumed,
   initialModel,
   initialGroupId,
   initialKnowledgeIds,
+  initialSettings,
   initialAttachments,
   onInitialAttachmentsConsumed,
   attachments,
@@ -99,6 +126,9 @@ export default function ChatView({
   const [model, setModel] = useState<string>(initialModel ?? "");
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>(initialKnowledgeIds ?? []);
+  // The chat's own settings (system prompt, parameters) and the feature switches.
+  const [settings, setSettings] = useState<ChatSettings>(() => initialSettings ?? emptySettings());
+  const serverOptions = useServerOptions(baseUrl, apiKey);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
@@ -111,10 +141,13 @@ export default function ChatView({
   // clobber the in-flight streaming state we're already tracking locally.
   const skipNextLoadRef = useRef(false);
   const sendLockRef = useRef(false);
+  // The conversation created in this view whose placeholder title is still to be replaced.
+  const titlePendingRef = useRef<string | null>(null);
   // Id of the reply currently streaming, so the Stop button can cancel it.
   const activeRequestRef = useRef<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const composerRef = useRef<ComposerHandle>(null);
+  const selectedModel = models.find((m) => m.id === model);
 
   // Loads the model and knowledge-base lists. Also behind the "Retry" button,
   // so a temporary server problem doesn't leave the composer locked forever.
@@ -159,14 +192,22 @@ export default function ChatView({
     }
     if (!conversationId) {
       setMessages([]);
+      setSettings(initialSettings ?? emptySettings());
       return;
     }
     // Ignore results that arrive after the user already switched to another
     // conversation (a slow load must not overwrite the newer thread).
     let cancelled = false;
     setSelectedKnowledgeIds([]);
-    getMessages(conversationId).then((stored) => {
+    // A chat that so far only exists on the server has its messages fetched
+    // on first open (never throws).
+    setActiveChat(conversationId);
+    refreshChatMessages(conversationId).then(() => getMessages(conversationId)).then((stored) => {
       if (cancelled) return;
+      // Opening a chat reads it: the unread dot goes away.
+      markChatRead(conversationId).then((cleared) => {
+        if (cleared) onChatRead?.();
+      });
       setMessages(
         stored.map((m) => {
           const storedAttachments = parseAttachments(m);
@@ -180,8 +221,15 @@ export default function ChatView({
             files,
             createdAt: m.created_at,
             vote: m.vote ?? undefined,
+            reasoning: m.reasoning ?? undefined,
+            reasoningSeconds: m.reasoning_seconds ?? undefined,
+            sources: parseSources(m).length > 0 ? parseSources(m) : undefined,
             attachments: storedAttachments.length
-              ? storedAttachments.map((a) => ({ filename: a.filename, mimeType: a.mimeType }))
+              ? storedAttachments.map((a) => ({
+                  filename: a.filename,
+                  mimeType: a.mimeType,
+                  fileId: a.openWebUiFileId,
+                }))
               : undefined,
           };
         }),
@@ -190,12 +238,15 @@ export default function ChatView({
       if (!cancelled) setError(`Could not load this conversation: ${errorText(err)}`);
     });
     getConversation(conversationId).then((conv) => {
-      if (!cancelled && conv) setSelectedKnowledgeIds(parseKnowledgeIds(conv));
+      if (cancelled || !conv) return;
+      setSelectedKnowledgeIds(parseKnowledgeIds(conv));
+      setSettings(chatSettingsOf(conv));
     }).catch(() => {
       // The messages load above already reports a broken database.
     });
     return () => {
       cancelled = true;
+      setActiveChat(null);
     };
   }, [conversationId]);
 
@@ -214,11 +265,25 @@ export default function ChatView({
     onInitialAttachmentsConsumed?.();
   }, [initialMessage, initialAttachments, baseUrl, model]);
 
+  // A change to the system prompt / parameters / switches. Kept with the chat
+  // once it exists (and pushed to the server with the next sync).
+  function handleSettingsChange(next: ChatSettings) {
+    setSettings(next);
+    const id = conversationIdRef.current;
+    if (!id) return;
+    setChatSettings(id, next)
+      .then(() => onConversationActivity?.())
+      .catch((err) => setError(errorText(err)));
+  }
+
   function toggleKnowledgeBase(id: string) {
     setSelectedKnowledgeIds((prev) => {
       const next = prev.includes(id) ? prev.filter((k) => k !== id) : [...prev, id];
       if (conversationIdRef.current) {
-        setConversationKnowledge(conversationIdRef.current, next);
+        // Stored on the server chat too, so it is pushed with the next sync.
+        setConversationKnowledge(conversationIdRef.current, next)
+          .then(() => onConversationActivity?.())
+          .catch((err) => setError(errorText(err)));
       }
       return next;
     });
@@ -226,9 +291,12 @@ export default function ChatView({
 
   async function ensureConversation(title: string): Promise<string> {
     if (conversationIdRef.current) return conversationIdRef.current;
-    const trimmedTitle = title.length > 48 ? `${title.slice(0, 48)}…` : title;
-    const created = await createConversation(model, trimmedTitle, selectedKnowledgeIds, initialGroupId ?? null);
+    const created = await createConversation(model, autoTitle(title), selectedKnowledgeIds, initialGroupId ?? null);
     conversationIdRef.current = created.id;
+    await setChatSettings(created.id, settings);
+    // Still carries the placeholder title: the first reply gets it a proper one.
+    titlePendingRef.current = created.id;
+    setActiveChat(created.id);
     skipNextLoadRef.current = true;
     onConversationCreated(created.id);
     return created.id;
@@ -245,9 +313,14 @@ export default function ChatView({
     setSending(true);
 
     const history: ChatMessage[] = historyMessages.map((m) => ({ role: m.role, content: m.content, files: m.files }));
-    // A folder's system prompt goes first; it's never stored as a chat message.
-    const folderPrompt = await folderSystemPrompt(convId);
-    if (folderPrompt) history.unshift({ role: "system", content: folderPrompt });
+    // The folder's system prompt goes first, then the chat's own; neither is
+    // stored as a chat message.
+    const systemPrompt = combinedSystemPrompt(await folderSystemPrompt(convId), settings.params.system);
+    if (systemPrompt) history.unshift({ role: "system", content: systemPrompt });
+    const options = toCompletionOptions({
+      params: settings.params,
+      features: effectiveFeatures(settings.features, availableFeatures(selectedModel, serverOptions.features)),
+    });
     const lastUserMsg = [...historyMessages].reverse().find((m) => m.role === "user");
 
     let acc: ChunkAccumulator = initialChunkAccumulator;
@@ -263,15 +336,30 @@ export default function ChatView({
         selectedKnowledgeIds,
         (chunk) => {
           acc = applyChatChunk(acc, chunk);
-          if (chunk.type === "delta") {
+          if (chunk.type === "delta" || chunk.type === "reasoning" || chunk.type === "sources") {
+            // Show the answer, the thinking and the sources as they arrive.
+            const view = splitThinking(acc.content);
+            const reasoning = [acc.reasoning, view.reasoning].filter(Boolean).join("\n\n");
+            const thinking = view.open || (acc.reasoning !== "" && view.content === "");
             setMessages((prev) =>
-              prev.map((m) => (m.id === assistantId ? { ...m, content: acc.content } : m)),
+              prev.map((m) =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      content: view.content,
+                      reasoning: reasoning || undefined,
+                      thinking,
+                      sources: acc.sources.length > 0 ? acc.sources : undefined,
+                    }
+                  : m,
+              ),
             );
           } else if (chunk.type === "error") {
             setError(acc.errorMessage!);
           }
         },
         requestId,
+        options,
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -279,8 +367,21 @@ export default function ChatView({
       activeRequestRef.current = null;
       setStreaming(false);
       setSending(false);
+      // The answer without its thinking, the thinking apart, and how long it took.
+      const done = finishMessage(acc);
       setMessages((prev) =>
-        prev.map((m) => (m.id === assistantId ? { ...m, streaming: false } : m)),
+        prev.map((m) =>
+          m.id === assistantId
+            ? {
+                ...m,
+                content: done.content,
+                reasoning: done.reasoning || undefined,
+                reasoningSeconds: done.reasoningSeconds,
+                thinking: false,
+                streaming: false,
+              }
+            : m,
+        ),
       );
       // Persisting must never throw out of `finally` (it would replace the
       // real error and surface as an unhandled rejection): report it instead.
@@ -288,8 +389,14 @@ export default function ChatView({
         if (acc.promptTokens !== undefined && lastUserMsg) {
           await updateMessageTokens(lastUserMsg.id, acc.promptTokens);
         }
-        if (acc.content) {
-          const stored = await addMessage(convId, { role: "assistant", content: acc.content }, acc.completionTokens);
+        if (done.content || done.reasoning) {
+          const stored = await addMessage(
+            convId,
+            { role: "assistant", content: done.content },
+            acc.completionTokens,
+            undefined,
+            { reasoning: done.reasoning, reasoningSeconds: done.reasoningSeconds, sources: done.sources },
+          );
           // The streaming placeholder used a locally-generated id — swap it
           // for the real persisted id/timestamp so later actions (regenerate,
           // edit) can reference this message correctly.
@@ -298,8 +405,15 @@ export default function ChatView({
               m.id === assistantId ? { ...m, id: stored.id, createdAt: stored.created_at } : m,
             ),
           );
-          void notifyReplyIfEnabled(acc.content);
+          void notifyReplyIfEnabled(done.content || done.reasoning);
+          if (titlePendingRef.current === convId) {
+            titlePendingRef.current = null;
+            void generateChatTitle(convId).then((renamed) => {
+              if (renamed) onConversationActivity?.();
+            });
+          }
         }
+        onConversationActivity?.();
       } catch (err) {
         setError(`The reply could not be saved: ${errorText(err)}`);
       }
@@ -341,6 +455,10 @@ export default function ChatView({
     if (sendAttachments.length > 0) {
       try {
         for (const attachment of sendAttachments) {
+          if (attachment.uploadedId) {
+            uploadedAttachments.push(attachment); // already on the server
+            continue;
+          }
           const uploaded = await uploadOpenWebUiFile(baseUrl, apiKey, attachment.path);
           uploadedAttachments.push({ ...attachment, uploadedId: uploaded.id });
         }
@@ -372,7 +490,7 @@ export default function ChatView({
         files,
         createdAt: userMsg.created_at,
         attachments: uploadedAttachments.length
-          ? uploadedAttachments.map((a) => ({ filename: a.filename, mimeType: a.mimeType }))
+          ? uploadedAttachments.map((a) => ({ filename: a.filename, mimeType: a.mimeType, fileId: a.uploadedId }))
           : undefined,
       },
     ];
@@ -417,6 +535,16 @@ export default function ChatView({
     });
   }
 
+  // Downloads the attachment and opens it with the system's default app.
+  async function handleOpenAttachment(attachment: { fileId: string; filename: string }) {
+    if (!baseUrl) return;
+    try {
+      await openServerFile(baseUrl, apiKey ?? "", attachment.fileId, attachment.filename);
+    } catch (err) {
+      setError(`Could not open ${attachment.filename}: ${errorText(err)}`);
+    }
+  }
+
   async function handleVote(id: string, rating: number) {
     const convId = conversationIdRef.current;
     if (!convId || !baseUrl) return;
@@ -432,9 +560,23 @@ export default function ChatView({
       if (!conv) return;
       const { chatId } = await ensureSharedChat(conv);
       const stored = await getMessages(convId);
-      const remoteMessageId = stored.find((m) => m.id === id)?.openwebui_message_id;
+      const row = stored.find((m) => m.id === id);
+      const remoteMessageId = row?.openwebui_message_id;
       if (!remoteMessageId) throw new Error("Could not determine this message's Open WebUI id.");
-      await rateOpenWebUiMessage(baseUrl, apiKey, chatId, remoteMessageId, model, nextVote);
+      // The feedback record is kept so a later change updates it instead of piling up new ones.
+      const feedbackId = await rateOpenWebUiMessage(
+        baseUrl,
+        apiKey,
+        chatId,
+        remoteMessageId,
+        conv.model || model,
+        nextVote,
+        row?.feedback_id ?? null,
+      );
+      await setMessageFeedbackId(id, feedbackId);
+      // The rating also lives in the chat itself (annotation): send it with the next push.
+      await markConversationDirty(convId);
+      onConversationActivity?.();
     } catch (err) {
       // Roll back so the UI never shows a vote the server didn't record.
       setVote(target.vote);
@@ -472,20 +614,28 @@ export default function ChatView({
         onEditMessage={handleEditMessage}
         onRegenerate={handleRegenerate}
         onVote={handleVote}
+        onOpenAttachment={handleOpenAttachment}
       />
 
       <div className="chat-view-footer">
-      {(knowledgeBases.length > 0 || attachments.length > 0) && (
+      {(selectedKnowledgeIds.length > 0 || attachments.length > 0) && (
         <div className="context-row">
-          {knowledgeBases.length > 0 && (
-            <KnowledgePicker
-              knowledgeBases={knowledgeBases}
-              selectedIds={selectedKnowledgeIds}
-              onToggle={toggleKnowledgeBase}
-            />
-          )}
-          {attachments.length > 0 && (
+          {(attachments.length > 0 || selectedKnowledgeIds.length > 0) && (
             <div className="attachment-chip-row">
+              {selectedKnowledgeIds.map((id) => (
+                <span key={id} className="attachment-chip">
+                  <span className="attachment-chip-icon">🗄</span>
+                  <span className="attachment-chip-name">{knowledgeBases.find((kb) => kb.id === id)?.name ?? id}</span>
+                  <button
+                    type="button"
+                    className="attachment-chip-remove"
+                    aria-label="Remove knowledge"
+                    onClick={() => toggleKnowledgeBase(id)}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
               {attachments.map((a) => (
                 <span key={a.id} className="attachment-chip">
                   <span className="attachment-chip-icon">{a.kind === "image" ? "🖼" : "📄"}</span>
@@ -505,26 +655,43 @@ export default function ChatView({
         </div>
       )}
 
-      <Composer
-        ref={composerRef}
-        onSend={(text, atts) => handleSend(text, atts)}
-        disabled={sending || !model}
-        attachments={attachments}
-        streaming={streaming}
-        onStop={handleStop}
-      />
-      <div className="composer-toolbar">
-        <div className="composer-toolbar-left">
-          <AttachButton onAdd={onAddAttachments} onError={onAttachmentError} />
-          <MicButton
-            baseUrl={baseUrl}
-            apiKey={apiKey}
-            onResult={(text) => composerRef.current?.appendText(text)}
-            onError={setError}
-          />
-        </div>
-        <div className="composer-toolbar-right">
-          <ModelPicker models={models} selectedId={model} onSelect={setModel} disabled={loadingModels} />
+      <div className="composer-card">
+        <Composer
+          ref={composerRef}
+          onSend={(text, atts) => handleSend(text, atts)}
+          disabled={sending || !model}
+          attachments={attachments}
+          streaming={streaming}
+          onStop={handleStop}
+          onPasteAttachments={onAddAttachments}
+          onPasteError={onAttachmentError}
+        />
+        <div className="composer-toolbar">
+          <div className="composer-toolbar-left">
+            <AttachButton
+              onAdd={onAddAttachments}
+              onError={onAttachmentError}
+              knowledgeBases={knowledgeBases}
+              selectedKnowledgeIds={selectedKnowledgeIds}
+              onToggleKnowledge={toggleKnowledgeBase}
+            />
+            <ChatOptionsBar
+              settings={settings}
+              onChange={handleSettingsChange}
+              model={selectedModel}
+              serverFeatures={serverOptions.features}
+              tools={serverOptions.tools}
+            />
+          </div>
+          <div className="composer-toolbar-right">
+            <ModelPicker models={models} selectedId={model} onSelect={setModel} disabled={loadingModels} />
+            <MicButton
+              baseUrl={baseUrl}
+              apiKey={apiKey}
+              onResult={(text) => composerRef.current?.appendText(text)}
+              onError={setError}
+            />
+          </div>
         </div>
       </div>
       </div>

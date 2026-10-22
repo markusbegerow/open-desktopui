@@ -71,6 +71,7 @@ type Remote = {
   isExpanded: boolean;
   systemPrompt: string | null;
   systemPromptKnown: boolean;
+  updatedAt?: number;
 };
 let remote: Remote[] = [];
 let remoteNext = 1;
@@ -180,6 +181,17 @@ describe("pullFolders", () => {
     expect(remote[0].name).toBe("New name");
     expect(groups[0].name).toBe("New name");
     expect(groups[0].dirty).toBe(0);
+  });
+
+  it("lets the server win when it changed a dirty folder after the local edit", async () => {
+    addRemote({ id: "S1", name: "Server name", updatedAt: 5000 });
+    groups.push({ ...baseGroup("L1", "Local name"), openwebui_folder_id: "S1", dirty: 1, updated_at: 1000 });
+    const { pullFolders } = await import("./folderSync");
+    expect(await pullFolders()).toBe(true);
+    expect(groups[0].name).toBe("Server name");
+    expect(groups[0].dirty).toBe(0);
+    expect(remote[0].name).toBe("Server name");
+    expect(api.updateFolder).not.toHaveBeenCalled();
   });
 
   it("keeps the local system prompt when the server's detail lookup failed", async () => {

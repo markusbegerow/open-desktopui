@@ -11,12 +11,14 @@ export interface ConversationMenuProps {
   onTogglePin: () => void;
   onToggleUnread: () => void;
   onRename: () => void;
+  onEditTags: () => void;
   onMoveToGroup: (groupId: string | null) => void;
   onCreateGroupAndMove: (name: string) => void;
   onToggleArchive: () => void;
   onDelete: () => void;
   onOpenInOpenWebUi: () => void;
   onCopyLink: () => void;
+  onCopyAppLink: () => void;
   onExport: () => void;
 }
 
@@ -27,12 +29,14 @@ export default function ConversationMenu({
   onTogglePin,
   onToggleUnread,
   onRename,
+  onEditTags,
   onMoveToGroup,
   onCreateGroupAndMove,
   onToggleArchive,
   onDelete,
   onOpenInOpenWebUi,
   onCopyLink,
+  onCopyAppLink,
   onExport,
 }: ConversationMenuProps) {
   const { t } = useTranslation();
@@ -146,8 +150,14 @@ export default function ConversationMenu({
           <button className="picker-option" type="button" onClick={() => run(onRename)}>
             Rename
           </button>
+          <button className="picker-option" type="button" onClick={() => run(onEditTags)}>
+            {t("tags.menu")}
+          </button>
           <button className="picker-option" type="button" onClick={() => run(onCopyLink)}>
             Share Link
+          </button>
+          <button className="picker-option" type="button" onClick={() => run(onCopyAppLink)}>
+            {t("sidebar.copyAppLink")}
           </button>
           <button className="picker-option" type="button" onClick={() => run(onExport)}>
             Export...

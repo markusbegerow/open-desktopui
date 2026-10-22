@@ -84,6 +84,106 @@ pub async fn list_openwebui_models(
     openwebui_client::list_models(base_url, api_key).await
 }
 
+#[tauri::command]
+pub async fn list_openwebui_prompts(
+    base_url: String,
+    token: String,
+) -> Result<Vec<openwebui_client::ServerPrompt>, String> {
+    openwebui_client::list_prompts(base_url, token).await
+}
+
+#[tauri::command]
+pub async fn list_openwebui_notes(
+    base_url: String,
+    token: String,
+) -> Result<Vec<openwebui_client::ServerNote>, String> {
+    openwebui_client::list_notes(base_url, token).await
+}
+
+#[tauri::command]
+pub async fn list_openwebui_files(
+    base_url: String,
+    token: String,
+) -> Result<Vec<openwebui_client::ServerFile>, String> {
+    openwebui_client::list_files(base_url, token).await
+}
+
+#[tauri::command]
+pub async fn fetch_web_page(url: String) -> Result<String, String> {
+    openwebui_client::fetch_web_page(url).await
+}
+
+#[tauri::command]
+pub async fn create_openwebui_note(
+    base_url: String,
+    token: String,
+    title: String,
+    markdown: String,
+) -> Result<openwebui_client::ServerNote, String> {
+    openwebui_client::create_note(base_url, token, title, markdown).await
+}
+
+#[tauri::command]
+pub async fn update_openwebui_note(
+    base_url: String,
+    token: String,
+    id: String,
+    title: String,
+    markdown: String,
+) -> Result<openwebui_client::ServerNote, String> {
+    openwebui_client::update_note(base_url, token, id, title, markdown).await
+}
+
+#[tauri::command]
+pub async fn delete_openwebui_note(base_url: String, token: String, id: String) -> Result<(), String> {
+    openwebui_client::delete_note(base_url, token, id).await
+}
+
+#[tauri::command]
+pub async fn list_openwebui_memories(
+    base_url: String,
+    token: String,
+) -> Result<Vec<openwebui_client::ServerMemory>, String> {
+    openwebui_client::list_memories(base_url, token).await
+}
+
+#[tauri::command]
+pub async fn add_openwebui_memory(
+    base_url: String,
+    token: String,
+    content: String,
+) -> Result<openwebui_client::ServerMemory, String> {
+    openwebui_client::add_memory(base_url, token, content).await
+}
+
+#[tauri::command]
+pub async fn update_openwebui_memory(
+    base_url: String,
+    token: String,
+    id: String,
+    content: String,
+) -> Result<openwebui_client::ServerMemory, String> {
+    openwebui_client::update_memory(base_url, token, id, content).await
+}
+
+#[tauri::command]
+pub async fn delete_openwebui_memory(base_url: String, token: String, id: String) -> Result<(), String> {
+    openwebui_client::delete_memory(base_url, token, id).await
+}
+
+#[tauri::command]
+pub async fn get_openwebui_server_features(base_url: String) -> openwebui_client::ServerFeatures {
+    openwebui_client::get_server_features(base_url).await
+}
+
+#[tauri::command]
+pub async fn list_openwebui_tools(
+    base_url: String,
+    token: String,
+) -> Result<Vec<openwebui_client::ServerTool>, String> {
+    openwebui_client::list_tools(base_url, token).await
+}
+
 /// Stops a running `send_chat_message` (the Stop button). A no-op when the
 /// reply already finished.
 #[tauri::command]
@@ -102,6 +202,7 @@ pub async fn send_chat_message(
     model: String,
     messages: Vec<ChatMessage>,
     knowledge_ids: Option<Vec<String>>,
+    options: Option<openwebui_client::CompletionOptions>,
     request_id: String,
     channel: Channel<ChatChunk>,
     cancels: tauri::State<'_, openwebui_client::ChatCancel>,
@@ -113,6 +214,7 @@ pub async fn send_chat_message(
         model,
         messages,
         knowledge_ids.unwrap_or_default(),
+        options.unwrap_or_default(),
         channel,
         token,
     )
@@ -547,6 +649,64 @@ pub async fn move_openwebui_chat_to_folder(
 }
 
 #[tauri::command]
+pub async fn list_openwebui_chats(
+    base_url: String,
+    token: String,
+    folder_ids: Vec<String>,
+) -> Result<Vec<openwebui_client::ServerChat>, String> {
+    openwebui_client::list_chats(base_url, token, folder_ids).await
+}
+
+#[tauri::command]
+pub async fn get_openwebui_chat(
+    base_url: String,
+    token: String,
+    id: String,
+) -> Result<openwebui_client::ServerChatDetail, String> {
+    openwebui_client::get_chat(base_url, token, id).await
+}
+
+#[tauri::command]
+pub async fn update_openwebui_chat_title(
+    base_url: String,
+    token: String,
+    id: String,
+    title: String,
+) -> Result<(), String> {
+    openwebui_client::update_chat_title(base_url, token, id, title).await
+}
+
+#[tauri::command]
+pub async fn update_openwebui_chat_content(
+    base_url: String,
+    token: String,
+    id: String,
+    title: String,
+    model: String,
+    messages: Vec<openwebui_client::SyncMessage>,
+    knowledge: Vec<openwebui_client::KnowledgeRef>,
+    params: Option<openwebui_client::ChatParams>,
+) -> Result<(), String> {
+    openwebui_client::update_chat_content(base_url, token, id, title, model, messages, knowledge, params).await
+}
+
+#[tauri::command]
+pub async fn delete_openwebui_chat(base_url: String, token: String, id: String) -> Result<(), String> {
+    openwebui_client::delete_chat(base_url, token, id).await
+}
+
+#[tauri::command]
+pub async fn set_openwebui_chat_flag(
+    base_url: String,
+    token: String,
+    id: String,
+    flag: String,
+    value: bool,
+) -> Result<(), String> {
+    openwebui_client::set_chat_flag(base_url, token, id, flag, value).await
+}
+
+#[tauri::command]
 pub async fn rate_openwebui_message(
     base_url: String,
     api_key: Option<String>,
@@ -554,8 +714,129 @@ pub async fn rate_openwebui_message(
     message_id: String,
     model: String,
     rating: i32,
+    feedback_id: Option<String>,
+) -> Result<Option<String>, String> {
+    openwebui_client::rate_message(
+        base_url,
+        api_key.unwrap_or_default(),
+        chat_id,
+        message_id,
+        model,
+        rating,
+        feedback_id,
+    )
+    .await
+}
+
+/// Opens the small always-on-top chat window (global shortcut), or brings the
+/// open one to the front.
+#[tauri::command]
+pub async fn show_quick_chat(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window("quick") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        return window.set_focus().map_err(|e| e.to_string());
+    }
+    tauri::WebviewWindowBuilder::new(&app, "quick", tauri::WebviewUrl::App("index.html?quick=1".into()))
+        .title("Open DesktopUI – Quick chat")
+        .inner_size(540.0, 520.0)
+        .min_inner_size(380.0, 320.0)
+        .always_on_top(true)
+        .center()
+        .focused(true)
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Brings the main window forward and tells it to open a conversation (used by
+/// the quick chat's "open in main window"). The quick chat closes afterwards.
+#[tauri::command]
+pub async fn open_in_main_window(app: tauri::AppHandle, conversation_id: String) -> Result<(), String> {
+    use tauri::{Emitter, Manager};
+    let main = app
+        .get_webview_window("main")
+        .ok_or_else(|| "the main window is not available".to_string())?;
+    let _ = main.show();
+    let _ = main.unminimize();
+    let _ = main.set_focus();
+    app.emit_to("main", "open-conversation", conversation_id)
+        .map_err(|e| e.to_string())?;
+    if let Some(quick) = app.get_webview_window("quick") {
+        let _ = quick.close();
+    }
+    Ok(())
+}
+
+/// Stores an image pasted from the clipboard. The bytes travel as the raw
+/// request body (a screenshot as a JSON number list would be huge); the file
+/// type comes in the `x-extension` header. Returns the file's path.
+#[tauri::command]
+pub async fn save_pasted_image(request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected the image as raw bytes".to_string());
+    };
+    let extension = request
+        .headers()
+        .get("x-extension")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("png");
+    let path = crate::paste::save_pasted_image(bytes, extension, &crate::paste::pasted_images_dir())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Downloads an attachment from the server and opens it with the system's
+/// default application for its type.
+#[tauri::command]
+pub async fn open_openwebui_file(
+    app: tauri::AppHandle,
+    base_url: String,
+    token: String,
+    file_id: String,
+    filename: String,
 ) -> Result<(), String> {
-    openwebui_client::rate_message(base_url, api_key, chat_id, message_id, model, rating).await
+    use tauri_plugin_opener::OpenerExt;
+    let path = openwebui_client::download_file(&base_url, &token, &file_id, &filename).await?;
+    app.opener()
+        .open_path(path.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn generate_openwebui_title(
+    base_url: String,
+    token: String,
+    model: String,
+    messages: Vec<ChatMessage>,
+    chat_id: Option<String>,
+) -> Result<Option<String>, String> {
+    openwebui_client::generate_title(base_url, token, model, messages, chat_id).await
+}
+
+#[tauri::command]
+pub async fn add_openwebui_chat_tag(
+    base_url: String,
+    token: String,
+    id: String,
+    name: String,
+) -> Result<Vec<String>, String> {
+    openwebui_client::add_chat_tag(base_url, token, id, name).await
+}
+
+#[tauri::command]
+pub async fn remove_openwebui_chat_tag(
+    base_url: String,
+    token: String,
+    id: String,
+    name: String,
+) -> Result<Vec<String>, String> {
+    openwebui_client::remove_chat_tag(base_url, token, id, name).await
+}
+
+#[tauri::command]
+pub async fn mark_openwebui_chat_unread(base_url: String, token: String, id: String) -> Result<(), String> {
+    openwebui_client::mark_chat_unread(base_url, token, id).await
 }
 
 #[tauri::command]

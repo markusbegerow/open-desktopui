@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import AttachButton from "./AttachButton";
 import Composer, { ComposerHandle } from "./Composer";
-import KnowledgePicker from "./KnowledgePicker";
 import MicButton from "./MicButton";
 import ModelPicker from "./ModelPicker";
 import UsageOverview from "./UsageOverview";
@@ -9,9 +8,18 @@ import { getAppPrefs, getOpenWebUiConfig } from "../lib/settingsStore";
 import { KnowledgeBase, listKnowledgeBases, listModels, OpenWebUiModel } from "../lib/openWebUiClient";
 import type { PendingAttachment } from "../lib/attachments";
 import { pickGreetingIndex, renderGreeting } from "../lib/greeting";
+import ChatOptionsBar from "./ChatOptionsBar";
+import { ChatSettings, emptySettings } from "../lib/chatOptions";
+import { useServerOptions } from "../lib/useServerOptions";
 
 export interface HomeViewProps {
-  onSend: (text: string, model: string, knowledgeIds: string[], attachments: PendingAttachment[]) => void;
+  onSend: (
+    text: string,
+    model: string,
+    knowledgeIds: string[],
+    attachments: PendingAttachment[],
+    settings: ChatSettings,
+  ) => void;
   attachments: PendingAttachment[];
   onAddAttachments: (attachments: PendingAttachment[]) => void;
   onRemoveAttachment: (id: string) => void;
@@ -34,6 +42,8 @@ export default function HomeView({
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState<string | undefined>(undefined);
   const [micError, setMicError] = useState<string | null>(null);
+  const [settings, setSettings] = useState<ChatSettings>(() => emptySettings());
+  const serverOptions = useServerOptions(baseUrl, apiKey);
   const composerRef = useRef<ComposerHandle>(null);
   const [greetingIndex] = useState(() => pickGreetingIndex());
 
@@ -78,17 +88,24 @@ export default function HomeView({
 
       <UsageOverview />
 
-      {(knowledgeBases.length > 0 || attachments.length > 0) && (
+      {(selectedKnowledgeIds.length > 0 || attachments.length > 0) && (
         <div className="context-row">
-          {knowledgeBases.length > 0 && (
-            <KnowledgePicker
-              knowledgeBases={knowledgeBases}
-              selectedIds={selectedKnowledgeIds}
-              onToggle={toggleKnowledgeBase}
-            />
-          )}
-          {attachments.length > 0 && (
+          {(attachments.length > 0 || selectedKnowledgeIds.length > 0) && (
             <div className="attachment-chip-row">
+              {selectedKnowledgeIds.map((id) => (
+                <span key={id} className="attachment-chip">
+                  <span className="attachment-chip-icon">🗄</span>
+                  <span className="attachment-chip-name">{knowledgeBases.find((kb) => kb.id === id)?.name ?? id}</span>
+                  <button
+                    type="button"
+                    className="attachment-chip-remove"
+                    aria-label="Remove knowledge"
+                    onClick={() => toggleKnowledgeBase(id)}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
               {attachments.map((a) => (
                 <span key={a.id} className="attachment-chip">
                   <span className="attachment-chip-icon">{a.kind === "image" ? "🖼" : "📄"}</span>
@@ -108,24 +125,41 @@ export default function HomeView({
         </div>
       )}
 
-      <Composer
-        ref={composerRef}
-        onSend={(text, atts) => onSend(text, model, selectedKnowledgeIds, atts)}
-        disabled={!model}
-        attachments={attachments}
-      />
-      <div className="composer-toolbar">
-        <div className="composer-toolbar-left">
-          <AttachButton onAdd={onAddAttachments} onError={onAttachmentError} />
-          <MicButton
-            baseUrl={baseUrl}
-            apiKey={apiKey}
-            onResult={(text) => composerRef.current?.appendText(text)}
-            onError={setMicError}
-          />
-        </div>
-        <div className="composer-toolbar-right">
-          <ModelPicker models={models} selectedId={model} onSelect={setModel} disabled={loadingModels} />
+      <div className="composer-card">
+        <Composer
+          ref={composerRef}
+          onSend={(text, atts) => onSend(text, model, selectedKnowledgeIds, atts, settings)}
+          disabled={!model}
+          attachments={attachments}
+          onPasteAttachments={onAddAttachments}
+          onPasteError={onAttachmentError}
+        />
+        <div className="composer-toolbar">
+          <div className="composer-toolbar-left">
+            <AttachButton
+              onAdd={onAddAttachments}
+              onError={onAttachmentError}
+              knowledgeBases={knowledgeBases}
+              selectedKnowledgeIds={selectedKnowledgeIds}
+              onToggleKnowledge={toggleKnowledgeBase}
+            />
+            <ChatOptionsBar
+              settings={settings}
+              onChange={setSettings}
+              model={models.find((m) => m.id === model)}
+              serverFeatures={serverOptions.features}
+              tools={serverOptions.tools}
+            />
+          </div>
+          <div className="composer-toolbar-right">
+            <ModelPicker models={models} selectedId={model} onSelect={setModel} disabled={loadingModels} />
+            <MicButton
+              baseUrl={baseUrl}
+              apiKey={apiKey}
+              onResult={(text) => composerRef.current?.appendText(text)}
+              onError={setMicError}
+            />
+          </div>
         </div>
       </div>
       {micError && <p className="status-error">{micError}</p>}
