@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentUser, login } from "../lib/openWebUiClient";
 import { syncServerAvatar } from "../lib/serverAvatar";
 import { pullFolders } from "../lib/folderSync";
@@ -7,6 +8,22 @@ import { getOpenWebUiConfig, setAppPrefs, setOpenWebUiConfig } from "../lib/sett
 import { isInsecureRemoteUrl } from "../lib/network";
 
 type Step = "loading" | "server" | "credentials";
+
+// Credit bottom-left, app version bottom-right — same as the splash screen.
+function LoginFooter() {
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    getVersion()
+      .then(setVersion)
+      .catch(() => {});
+  }, []);
+  return (
+    <>
+      <span className="login-credit">Developed by Markus Begerow</span>
+      {version && <span className="login-version">v{version}</span>}
+    </>
+  );
+}
 
 export default function LoginView({
   onSignedIn,
@@ -134,7 +151,7 @@ export default function LoginView({
             {insecureWarningAcked && isInsecureRemoteUrl(baseUrl.trim()) ? "Continue anyway" : "Continue"}
           </button>
         </form>
-        <span className="login-credit">Developed by Markus Begerow</span>
+        <LoginFooter />
       </div>
     );
   }
@@ -186,7 +203,7 @@ export default function LoginView({
           Skip for now
         </button>
       </form>
-      <span className="login-credit">Developed by Markus Begerow</span>
+      <LoginFooter />
     </div>
   );
 }

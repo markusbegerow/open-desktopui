@@ -758,7 +758,16 @@ pub struct ServerFile {
 /// `GET /api/v1/files/` — the files already uploaded to the server.
 pub async fn list_files(base_url: String, token: String) -> Result<Vec<ServerFile>, String> {
     let list = folder_request(reqwest::Method::GET, &base_url, "/api/v1/files/", &token, None).await?;
-    let items = list.as_array().ok_or_else(|| format!("unexpected files response: {list}"))?;
+    parse_files(&list)
+}
+
+// Newer servers may wrap the list ({"items": [...]}) instead of returning a bare array.
+fn parse_files(list: &serde_json::Value) -> Result<Vec<ServerFile>, String> {
+    let items = list
+        .as_array()
+        .or_else(|| list.get("items").and_then(|v| v.as_array()))
+        .or_else(|| list.get("data").and_then(|v| v.as_array()))
+        .ok_or_else(|| format!("unexpected files response: {list}"))?;
     Ok(items
         .iter()
         .filter_map(|f| {
@@ -3093,6 +3102,30 @@ mod profile_image_tests {
     fn rejects_other_origins() {
         assert!(resolve_same_origin("https://chat.example.com", "https://evil.example.org/a.png").is_err());
         assert!(resolve_same_origin("http://localhost:3000", "http://localhost:3001/a.png").is_err());
+    }
+}
+
+#[cfg(test)]
+mod file_list_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_bare_and_wrapped_lists() {
+        let item = json!({ "id": "f1", "filename": "a.pdf", "meta": { "content_type": "application/pdf" } });
+        let bare = parse_files(&json!([item.clone()])).unwrap();
+        let wrapped = parse_files(&json!({ "items": [item] })).unwrap();
+        assert_eq!(bare, wrapped);
+        assert_eq!(bare[0].filename, "a.pdf");
+        assert_eq!(bare[0].mime_type, "application/pdf");
+    }
+
+    #[test]
+    fn tolerates_missing_fields_and_skips_entries_without_id() {
+        let files = parse_files(&json!([{ "id": "x", "meta": null }, { "filename": "no-id" }])).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].filename, "file");
+        assert_eq!(files[0].mime_type, "application/octet-stream");
     }
 }
 
