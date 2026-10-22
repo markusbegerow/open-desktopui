@@ -88,17 +88,21 @@ export default function AttachButton({
 
   async function handleUpload() {
     setMenuOpen(false);
-    const selection = await open({
-      multiple: true,
-      filters: [{ name: "Documents & Images", extensions: ALLOWED_EXTENSIONS }],
-    });
-    if (!selection) return;
-    const paths = Array.isArray(selection) ? selection : [selection];
-    const results = paths.map(classifyAttachment);
-    const accepted = results.filter((r): r is PendingAttachment => !isRejected(r));
-    const rejected = results.filter(isRejected);
-    if (accepted.length) onAdd(accepted);
-    if (rejected.length) onError(rejected.map((r) => r.rejected).join(" "));
+    try {
+      const selection = await open({
+        multiple: true,
+        filters: [{ name: "Documents & Images", extensions: ALLOWED_EXTENSIONS }],
+      });
+      if (!selection) return;
+      const paths = Array.isArray(selection) ? selection : [selection];
+      const results = paths.map(classifyAttachment);
+      const accepted = results.filter((r): r is PendingAttachment => !isRejected(r));
+      const rejected = results.filter(isRejected);
+      if (accepted.length) onAdd(accepted);
+      if (rejected.length) onError(rejected.map((r) => r.rejected).join(" "));
+    } catch (err) {
+      onError(errorText(err));
+    }
   }
 
   async function handleCapture() {
@@ -150,11 +154,18 @@ export default function AttachButton({
 
   const loadFiles = async (): Promise<Entry[]> => {
     const { baseUrl, token } = await serverSession();
-    return (await listServerFiles(baseUrl, token)).map((f) => ({
-      id: f.id,
-      label: f.filename,
-      attach: async () => serverFileAttachment(f),
-    }));
+    const files = await listServerFiles(baseUrl, token);
+    if (!Array.isArray(files)) return [];
+    return files
+      .filter((f) => f && f.id)
+      .map((f) => {
+        const file = {
+          id: String(f.id),
+          filename: String(f.filename || "file"),
+          mimeType: String(f.mimeType || "application/octet-stream"),
+        };
+        return { id: file.id, label: file.filename, attach: async () => serverFileAttachment(file) };
+      });
   };
   const loadNotes = async (): Promise<Entry[]> =>
     (await listLibraryNotes()).map((n) => ({
@@ -205,7 +216,9 @@ export default function AttachButton({
     notes: t("composer.attachNotes"),
     chats: t("composer.referenceChats"),
   };
-  const shown = (entries ?? []).filter((e) => e.label.toLowerCase().includes(filter.trim().toLowerCase()));
+  const needle = filter.trim().toLowerCase();
+  const shown = (entries ?? []).filter((e) => e.label.toLowerCase().includes(needle));
+  const shownKnowledge = knowledgeBases.filter((kb) => String(kb.name ?? "").toLowerCase().includes(needle));
 
   return (
     <div className="options-popover" ref={rootRef}>
@@ -234,7 +247,10 @@ export default function AttachButton({
           {row(t("composer.attachFiles"), icon(<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5" strokeLinejoin="round" />), () => openList("files", loadFiles), { sub: true })}
           {row(t("composer.attachNotes"), icon(<path d="M5 4h11l3 3v13H5zM8 10h8M8 14h8" strokeLinejoin="round" strokeLinecap="round" />), () => openList("notes", loadNotes), { sub: true })}
           {hasKnowledge &&
-            row(t("composer.attachKnowledge"), icon(<><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" /></>), () => setView("knowledge"), { sub: true, count: selectedKnowledgeIds.length })}
+            row(t("composer.attachKnowledge"), icon(<><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" /></>), () => {
+            setFilter("");
+            setView("knowledge");
+          }, { sub: true, count: selectedKnowledgeIds.length })}
           {row(t("composer.referenceChats"), icon(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" strokeLinecap="round" /></>), () => openList("chats", loadChats), { sub: true })}
         </div>
       )}
@@ -289,15 +305,23 @@ export default function AttachButton({
       {menuOpen && view === "knowledge" && (
         <div className="options-menu options-menu-wide">
           {back(t("composer.attachKnowledge"))}
-          <div className="options-tools">
-            {knowledgeBases.map((kb) => (
-              <label key={kb.id} className="options-tool">
+          <input
+            className="options-filter"
+            type="search"
+            value={filter}
+            placeholder={t("composer.search")}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <div className="options-tools options-scroll">
+            {shownKnowledge.length === 0 && <p className="hint">{t("composer.empty")}</p>}
+            {shownKnowledge.map((kb) => (
+              <label key={kb.id} className="options-tool" title={kb.name}>
                 <input
                   type="checkbox"
                   checked={selectedKnowledgeIds.includes(kb.id)}
                   onChange={() => onToggleKnowledge?.(kb.id)}
                 />
-                <span>{kb.name}</span>
+                <span className="options-ellipsis">{kb.name}</span>
               </label>
             ))}
           </div>

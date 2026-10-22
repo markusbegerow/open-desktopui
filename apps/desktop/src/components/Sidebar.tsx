@@ -46,6 +46,7 @@ import FolderDialog from "./FolderDialog";
 import FolderMenu from "./FolderMenu";
 import TagFilter from "./TagFilter";
 import TagPicker from "./TagPicker";
+import { NO_FOLDER, useChatDrag } from "../lib/useChatDrag";
 
 export type View = "home" | "chat" | "notes" | "settings";
 
@@ -335,6 +336,24 @@ export default function Sidebar({
     reportSync(await setFolderExpanded(group.id, !group.is_expanded));
   }
 
+  // Opens a collapsed folder the pointer rests on while dragging a chat.
+  function expandFolder(id: string) {
+    const group = groups.find((g) => g.id === id);
+    if (group && !group.is_expanded) void handleToggleFolder(group);
+  }
+
+  function handleDropChat(conversationId: string, folderId: string | null) {
+    const c = conversations.find((x) => x.id === conversationId);
+    if (!c || (c.group_id ?? null) === folderId) return;
+    void handleMoveToGroup(c, folderId);
+  }
+
+  const { ghost, overTarget, startDrag, consumeClick } = useChatDrag({
+    onDrop: handleDropChat,
+    onHoverFolder: expandFolder,
+  });
+  const dropClass = (target: string) => (overTarget === target ? " drop-target" : "");
+
   async function handleToggleArchive(c: Conversation) {
     const willArchive = !c.archived;
     const outcome = await setChatArchived(c, willArchive);
@@ -484,7 +503,10 @@ export default function Sidebar({
       <div className="conversation-item-row" key={c.id}>
         <button
           className={`conversation-item${isActive ? " active" : ""}${c.unread ? " unread" : ""}`}
-          onClick={() => onSelectConversation(c.id)}
+          onPointerDown={(e) => startDrag(e, c.id, c.title || "New conversation")}
+          onClick={() => {
+            if (!consumeClick()) onSelectConversation(c.id);
+          }}
           title={c.title}
         >
           {c.unread ? <span className="conversation-unread-dot" /> : null}
@@ -525,7 +547,7 @@ export default function Sidebar({
     const items = folderItems(group.id);
     return (
       <div key={group.id} className="folder" style={{ marginLeft: node.depth * 12 }}>
-        <div className="folder-row">
+        <div className={`folder-row${dropClass(group.id)}`} data-drop-folder={group.id}>
           <button
             type="button"
             className="folder-toggle"
@@ -662,14 +684,16 @@ export default function Sidebar({
         )}
         {isOpen("folders") && folderTree.map(renderFolder)}
 
-        {(dateGroups.length > 0 || !searching) && sectionHeader("chats", t("sidebar.chats"))}
-        {isOpen("chats") &&
-          dateGroups.map((group) => (
-            <div key={group.key}>
-              <div className="sidebar-group-label">{dateGroupLabel(group)}</div>
-              <div className="conversation-list">{group.items.map(renderConversation)}</div>
-            </div>
-          ))}
+        <div className={`chats-drop${dropClass(NO_FOLDER)}`} data-drop-folder={NO_FOLDER}>
+          {(dateGroups.length > 0 || !searching) && sectionHeader("chats", t("sidebar.chats"))}
+          {isOpen("chats") &&
+            dateGroups.map((group) => (
+              <div key={group.key}>
+                <div className="sidebar-group-label">{dateGroupLabel(group)}</div>
+                <div className="conversation-list">{group.items.map(renderConversation)}</div>
+              </div>
+            ))}
+        </div>
 
         {archived.length > 0 && (
           <>
@@ -678,6 +702,12 @@ export default function Sidebar({
           </>
         )}
       </div>
+
+      {ghost && (
+        <div className="drag-ghost" style={{ left: ghost.x + 12, top: ghost.y + 12 }}>
+          {ghost.title}
+        </div>
+      )}
 
       {updateVersion && onShowUpdate && (
         <button type="button" className="sidebar-update" onClick={onShowUpdate}>

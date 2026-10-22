@@ -1643,12 +1643,20 @@ fieldset button[type="submit"]:hover {
   margin-bottom: 12px;
 }
 
-.login-credit {
+.login-credit,
+.login-version {
   position: fixed;
   bottom: 16px;
-  right: 20px;
   font-size: 12px;
   color: color-mix(in srgb, canvas 25%, canvastext 75%);
+}
+
+.login-credit {
+  left: 20px;
+}
+
+.login-version {
+  right: 20px;
 }
 
 .login-card h1 {
@@ -1871,6 +1879,10 @@ button.attachment-chip-open:hover {
   left: 0;
   z-index: var(--menu-z, 20);
   min-width: 240px;
+  max-height: min(70vh, 480px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
   padding: 6px;
   border: 1px solid color-mix(in srgb, canvas 70%, canvastext 30%);
   border-radius: 12px;
@@ -2257,9 +2269,19 @@ button.attachment-chip-open:hover {
   margin-bottom: 6px;
 }
 
-.options-list {
+.options-list,
+.options-scroll {
   max-height: 240px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.options-tool {
+  min-width: 0;
+}
+
+.options-tool > span {
+  min-width: 0;
 }
 
 .options-ellipsis {
@@ -2280,6 +2302,37 @@ button.attachment-chip-open:hover {
   padding: 0;
   font-size: 18px;
   line-height: 1;
+}
+
+/* Dragging a chat onto a folder / back to "Chats" */
+body.is-dragging {
+  user-select: none;
+  cursor: grabbing;
+}
+
+.drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  max-width: 240px;
+  padding: 6px 10px;
+  border: 1px solid #3b82f6;
+  border-radius: 8px;
+  background: canvas;
+  color: canvastext;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+.folder-row.drop-target,
+.chats-drop.drop-target {
+  outline: 2px solid #3b82f6;
+  outline-offset: -2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, #3b82f6 14%, transparent);
 }
 
 /* Notes docked beside the chat */
